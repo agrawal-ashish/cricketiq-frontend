@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ── API CONFIG ─────────────────────────────────────────────────────────────
 // Questions now come from the CricketIQ API instead of being bundled here.
 // Point this at wherever the API is running (see cricketiq-api/README.md).
-const API_BASE_URL = "https://cricketiq-api-yjmf.onrender.com";
+const API_BASE_URL = "http://localhost:4000";
 
 // Shuffle options PER question at runtime so correct answer is random position
 function prepareQuestion(q) {
@@ -67,11 +67,12 @@ function RippleBtn({ children, onClick, className, disabled, style }) {
     if (disabled) return;
     const btn = ref.current;
     const r = btn.getBoundingClientRect();
+    const size = Math.min(Math.max(r.width, r.height) * 2, 220);
     const ripple = document.createElement("span");
     ripple.style.cssText = `position:absolute;border-radius:50%;background:rgba(255,255,255,0.25);
-      width:${Math.max(r.width,r.height)*2}px;height:${Math.max(r.width,r.height)*2}px;
-      left:${e.clientX-r.left-Math.max(r.width,r.height)}px;
-      top:${e.clientY-r.top-Math.max(r.width,r.height)}px;
+      width:${size}px;height:${size}px;
+      left:${e.clientX-r.left-size/2}px;
+      top:${e.clientY-r.top-size/2}px;
       animation:rippleAnim 0.6s linear forwards;pointer-events:none;`;
     btn.appendChild(ripple);
     setTimeout(() => ripple.remove(), 600);
@@ -198,8 +199,6 @@ function HomeScreen({ onStart, stats, totalQuestions }) {
           </span>
           <div className="hs-cta-shine" />
         </RippleBtn>
-
-        <p className="hs-footer">{totalQuestions} questions · All formats · Live from API</p>
       </div>
     </div>
   );
@@ -343,22 +342,42 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
 
       {/* TOP BAR */}
       <div className="qs-topbar">
-        <div className="qs-lives">
-          {[...Array(MAX_WRONG)].map((_,i) => (
-            <div key={i} className={`qs-heart ${i < livesLeft ? "alive":"dead"}`}>
-              {i < livesLeft ? "❤️" : "🩶"}
-            </div>
-          ))}
-        </div>
-        <div className="qs-score-wrap" style={{ position:"relative" }}>
-          <ScorePop value={popVal} visible={showPop} />
-          <div className="qs-score">{score} <span>PTS</span></div>
-        </div>
-        {streak >= 2 &&
-          <div className="qs-streak" style={{ "--sc": catMeta.color }}>
-            🔥 {streak}×
+        <div className="qs-topbar-row1">
+          <div className="qs-lives">
+            {[...Array(MAX_WRONG)].map((_,i) => (
+              <div key={i} className={`qs-heart ${i < livesLeft ? "alive":"dead"}`}>
+                {i < livesLeft ? "❤️" : "🩶"}
+              </div>
+            ))}
           </div>
-        }
+
+          <div className="qs-topbar-divider" />
+
+          <div className="qs-ll-mini-row">
+            <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`}
+              onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
+              <span className="qs-ll-mini-icon">50:50</span>
+              {!lifelines.ff && <div className="qs-ll-mini-strike" />}
+            </RippleBtn>
+            <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`}
+              onClick={useSkip} disabled={!lifelines.skip || chosen !== null}>
+              <span className="qs-ll-mini-icon">⏭ SKIP</span>
+              {!lifelines.skip && <div className="qs-ll-mini-strike" />}
+            </RippleBtn>
+          </div>
+        </div>
+
+        <div className="qs-topbar-row2">
+          <div className="qs-score-wrap" style={{ position:"relative" }}>
+            <ScorePop value={popVal} visible={showPop} />
+            <div className="qs-score">{score} <span>PTS</span></div>
+          </div>
+          {streak >= 2 &&
+            <div className="qs-streak" style={{ "--sc": catMeta.color }}>
+              🔥 {streak}×
+            </div>
+          }
+        </div>
       </div>
 
       {/* LIVE STATS RIBBON */}
@@ -433,25 +452,6 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
             </RippleBtn>
           );
         })}
-      </div>
-
-      {/* LIFELINES */}
-      <div className="qs-lifelines">
-        <RippleBtn className={`qs-ll-btn ${!lifelines.ff ? "qs-ll-used" : ""}`}
-          onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
-          <span className="qs-ll-icon">50</span>
-          <span className="qs-ll-sub">50</span>
-          {!lifelines.ff && <div className="qs-ll-strike" />}
-        </RippleBtn>
-
-        <div className="qs-ll-divider" />
-
-        <RippleBtn className={`qs-ll-btn ${!lifelines.skip ? "qs-ll-used" : ""}`}
-          onClick={useSkip} disabled={!lifelines.skip || chosen !== null}>
-          <span className="qs-ll-icon">⏭</span>
-          <span className="qs-ll-sub">SKIP</span>
-          {!lifelines.skip && <div className="qs-ll-strike" />}
-        </RippleBtn>
       </div>
     </div>
   );
@@ -538,14 +538,47 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
   );
 }
 
+// ── PERSISTENCE (localStorage) ──────────────────────────────────────────────
+// Keeps track of which questions this device/browser has already answered
+// correctly (excluded forever) and which were shown in the last game
+// (excluded from the very next game), so returning players don't see the
+// same questions repeated across separate visits — not just within one
+// continuous play session.
+const LS_CORRECT_KEY = "cricketiq_correct_ids";
+const LS_RECENT_KEY  = "cricketiq_recent_ids";
+
+function loadIdSet(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.filter(Number.isInteger) : []);
+  } catch {
+    return new Set(); // localStorage unavailable (private browsing, etc.) — degrade gracefully
+  }
+}
+
+function saveIdSet(key, set) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch {
+    // Quota exceeded or unavailable — fine, this is a nice-to-have, not critical
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [screen, setScreen]     = useState("home");
-  const [answered, setAnswered] = useState(new Set()); // correctly answered — excluded forever
-  const [recentlySeen, setRecentlySeen] = useState(new Set()); // all shown last game — excluded next game
+  const [answered, setAnswered] = useState(() => loadIdSet(LS_CORRECT_KEY)); // correctly answered — excluded forever
+  const [recentlySeen, setRecentlySeen] = useState(() => loadIdSet(LS_RECENT_KEY)); // all shown last game — excluded next game
   const [stats, setStats]       = useState({ gamesPlayed:0, bestScore:0, totalCorrect:0 });
+
+  // Persist to localStorage whenever these change, so a returning player
+  // (new tab, reopened browser, different day) keeps getting fresh questions.
+  useEffect(() => { saveIdSet(LS_CORRECT_KEY, answered); }, [answered]);
+  useEffect(() => { saveIdSet(LS_RECENT_KEY, recentlySeen); }, [recentlySeen]);
 
   // Questions now come from the CricketIQ API instead of a bundled array.
   const [questions, setQuestions] = useState(null); // null = not loaded yet
@@ -555,7 +588,19 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     setLoadError(null);
-    fetch(`${API_BASE_URL}/api/questions/game`)
+    // Uses /questions/session instead of /questions/game: a much smaller,
+    // randomized batch (rather than all 1000 questions every load) that
+    // excludes whatever this device has already answered correctly. Faster
+    // load, especially on mobile, and it's *why* the no-repeat behavior
+    // actually holds across sessions rather than just within one sitting.
+    // Deliberately NOT re-run when `answered` changes mid-game — only on
+    // initial load / explicit retry (loadKey) — so an in-progress round
+    // never gets its question pool swapped out from under it.
+    fetch(`${API_BASE_URL}/api/questions/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ excludeIds: [...answered], count: 400 }),
+    })
       .then(res => {
         if (!res.ok) throw new Error(`API responded with ${res.status}`);
         return res.json();
@@ -571,7 +616,9 @@ export default function App() {
         if (!cancelled) setLoadError(err.message);
       });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadKey]);
+
 
   return (
     <>
@@ -669,16 +716,32 @@ button:disabled{cursor:not-allowed}
   padding:20px 16px 28px;display:flex;flex-direction:column;gap:14px;
   position:relative;overflow:hidden;
 }
-.qs-bg-glow{position:fixed;width:600px;height:600px;border-radius:50%;filter:blur(120px);opacity:0.07;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;animation:glowPulse 3s infinite;transition:background 0.5s}
+.qs-bg-glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(90px);opacity:0.08;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;animation:glowPulse 3s infinite;transition:background 0.5s}
 
-.qs-topbar{display:flex;align-items:center;gap:10px;position:relative;z-index:1}
-.qs-lives{display:flex;gap:6px;flex:1}
+.qs-topbar{display:flex;flex-direction:column;gap:8px;position:relative;z-index:1}
+.qs-topbar-row1{display:flex;align-items:center;gap:10px}
+.qs-topbar-row2{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.qs-topbar-divider{width:1px;height:26px;background:#1e3a5f;flex-shrink:0}
+.qs-lives{display:flex;gap:6px}
 .qs-heart{font-size:22px;transition:all 0.3s}
 .qs-heart.dead{animation:heartbeat 0.4s ease}
 .qs-score-wrap{position:relative}
 .qs-score{font-family:'Bebas Neue',sans-serif;font-size:22px;color:#f59e0b;background:#0f172a;border:1px solid #f59e0b33;border-radius:20px;padding:4px 14px}
 .qs-score span{font-size:12px;color:#475569;margin-left:2px}
 .qs-streak{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--sc);background:color-mix(in srgb,var(--sc) 15%,transparent);border:1px solid color-mix(in srgb,var(--sc) 40%,transparent);border-radius:20px;padding:4px 12px;animation:streakPop 0.4s ease}
+
+.qs-ll-mini-row{display:flex;gap:8px;flex:1;min-width:0}
+.qs-ll-mini{
+  display:flex;align-items:center;justify-content:center;gap:4px;
+  background:linear-gradient(135deg,#0f172a,#1e293b);
+  border:1.5px solid #1e3a5f;border-radius:10px;padding:6px 10px;
+  transition:all 0.2s;position:relative;flex-shrink:0;
+}
+.qs-ll-mini:hover:not(:disabled){border-color:#a78bfa;box-shadow:0 3px 12px #a78bfa22}
+.qs-ll-mini-icon{font-family:'Bebas Neue',sans-serif;font-size:13px;color:#a78bfa;letter-spacing:0.5px;white-space:nowrap}
+.qs-ll-mini-used{opacity:0.35}
+.qs-ll-mini-strike{position:absolute;inset:0;border-radius:10px;overflow:hidden}
+.qs-ll-mini-strike::after{content:'';position:absolute;top:50%;left:-5%;width:110%;height:1.5px;background:#ef4444;transform:rotate(-20deg)}
 
 .qs-ribbon{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,#0f172a,#131c35);border:1px solid #1e3a5f;border-radius:14px;padding:10px 16px;position:relative;z-index:1}
 .qs-ribbon-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1}
@@ -731,28 +794,13 @@ button:disabled{cursor:not-allowed}
 .qs-opt-dim{opacity:0.4 !important;pointer-events:none}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
 
-.qs-lifelines{display:flex;gap:12px;align-items:center;position:relative;z-index:1}
-.qs-ll-btn{
-  flex:1;background:linear-gradient(135deg,#0f172a,#1e293b);
-  border:1.5px solid #1e3a5f;border-radius:14px;padding:14px;
-  display:flex;flex-direction:column;align-items:center;gap:2px;
-  transition:all 0.2s;position:relative;
-}
-.qs-ll-btn:hover:not(:disabled){border-color:#a78bfa;transform:translateY(-2px);box-shadow:0 6px 20px #a78bfa22}
-.qs-ll-icon{font-family:'Bebas Neue',sans-serif;font-size:20px;color:#a78bfa;letter-spacing:1px}
-.qs-ll-sub{font-size:10px;color:#64748b;letter-spacing:2px;font-family:'Barlow Condensed',sans-serif;font-weight:700}
-.qs-ll-used{opacity:0.35}
-.qs-ll-strike{position:absolute;inset:0;border-radius:14px;overflow:hidden}
-.qs-ll-strike::after{content:'';position:absolute;top:50%;left:-5%;width:110%;height:2px;background:#ef4444;transform:rotate(-20deg)}
-.qs-ll-divider{width:1px;height:44px;background:#1e3a5f}
-
 /* ── RESULT ─────────────────────────── */
 .rs-root{
   min-height:100vh;width:100%;max-width:520px;margin:0 auto;
   padding:28px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   position:relative;overflow:hidden;gap:0;
 }
-.rs-bg-glow{position:fixed;width:600px;height:600px;border-radius:50%;filter:blur(140px);opacity:0.12;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:glowPulse 2.5s infinite}
+.rs-bg-glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(100px);opacity:0.12;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:glowPulse 2.5s infinite}
 .rs-confetti{position:fixed;width:10px;height:10px;border-radius:2px;animation:confettiFall 2s ease-in both}
 
 .rs-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;opacity:0;transition:opacity 0.5s,transform 0.5s;transform:translateY(20px)}
