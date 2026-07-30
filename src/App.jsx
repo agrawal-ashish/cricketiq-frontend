@@ -342,43 +342,43 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
 
       {/* TOP BAR */}
       <div className="qs-topbar">
-        <div className="qs-topbar-row1">
-          <div className="qs-lives">
-            {[...Array(MAX_WRONG)].map((_,i) => (
-              <div key={i} className={`qs-heart ${i < livesLeft ? "alive":"dead"}`}>
-                {i < livesLeft ? "❤️" : "🩶"}
-              </div>
-            ))}
-          </div>
-
-          <div className="qs-topbar-divider" />
-
-          <div className="qs-ll-mini-row">
-            <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`}
-              onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
-              <span className="qs-ll-mini-icon">50:50</span>
-              {!lifelines.ff && <div className="qs-ll-mini-strike" />}
-            </RippleBtn>
-            <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`}
-              onClick={useSkip} disabled={!lifelines.skip || chosen !== null}>
-              <span className="qs-ll-mini-icon">⏭ SKIP</span>
-              {!lifelines.skip && <div className="qs-ll-mini-strike" />}
-            </RippleBtn>
-          </div>
+        <div className="qs-lives">
+          {[...Array(MAX_WRONG)].map((_,i) => (
+            <div key={i} className={`qs-heart ${i < livesLeft ? "alive":"dead"}`}>
+              {i < livesLeft ? "❤️" : "🩶"}
+            </div>
+          ))}
         </div>
 
-        <div className="qs-topbar-row2">
-          <div className="qs-score-wrap" style={{ position:"relative" }}>
-            <ScorePop value={popVal} visible={showPop} />
-            <div className="qs-score">{score} <span>PTS</span></div>
+        <div className="qs-topbar-divider" />
+
+        <div className="qs-ll-mini-row">
+          <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`}
+            onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
+            <span className="qs-ll-mini-icon">50:50</span>
+            {!lifelines.ff && <div className="qs-ll-mini-strike" />}
+          </RippleBtn>
+          <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`}
+            onClick={useSkip} disabled={!lifelines.skip || chosen !== null}>
+            <span className="qs-ll-mini-icon">⏭ SKIP</span>
+            {!lifelines.skip && <div className="qs-ll-mini-strike" />}
+          </RippleBtn>
+        </div>
+
+        <div className="qs-topbar-spacer" />
+
+        {streak >= 2 &&
+          <div className="qs-streak" style={{ "--sc": catMeta.color }}>
+            🔥 {streak}×
           </div>
-          {streak >= 2 &&
-            <div className="qs-streak" style={{ "--sc": catMeta.color }}>
-              🔥 {streak}×
-            </div>
-          }
+        }
+
+        <div className="qs-score-wrap" style={{ position:"relative" }}>
+          <ScorePop value={popVal} visible={showPop} />
+          <div className="qs-score">{score} <span>PTS</span></div>
         </div>
       </div>
+
 
       {/* LIVE STATS RIBBON */}
       <div className="qs-ribbon">
@@ -651,7 +651,7 @@ button:disabled{cursor:not-allowed}
 
 /* ── HOME ─────────────────────────────── */
 .hs-root{
-  min-height:100vh;width:100%;max-width:520px;margin:0 auto;
+  min-height:100vh;min-height:100dvh;width:100%;max-width:520px;margin:0 auto;
   padding:28px 20px 40px;position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
 }
@@ -700,11 +700,13 @@ button:disabled{cursor:not-allowed}
   background:linear-gradient(135deg,#b5d99c,#ffff82);
   box-shadow:0 8px 32px #b5d99c44;transition:transform 0.2s,box-shadow 0.2s;
 }
-.hs-cta:hover{transform:translateY(-3px);box-shadow:0 12px 40px #b5d99c66}
+@media (hover: hover) {
+  .hs-cta:hover{transform:translateY(-3px);box-shadow:0 12px 40px #b5d99c66}
+  .hs-cta:hover .hs-cta-arrow{transform:translateX(4px)}
+}
 .hs-cta:active{transform:translateY(0)}
 .hs-cta-inner{display:flex;align-items:center;justify-content:center;gap:12px;padding:18px 32px;font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:3px;color:#0f172a}
 .hs-cta-arrow{font-size:18px;animation:none;transition:transform 0.2s}
-.hs-cta:hover .hs-cta-arrow{transform:translateX(4px)}
 .hs-cta-shine{position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.2),transparent);animation:shineSlide 3s infinite;pointer-events:none}
 @keyframes shineSlide{0%{left:-100%}50%,100%{left:150%}}
 
@@ -712,33 +714,35 @@ button:disabled{cursor:not-allowed}
 
 /* ── QUIZ ─────────────────────────────── */
 .qs-root{
-  min-height:100vh;width:100%;max-width:520px;margin:0 auto;
+  min-height:100vh;min-height:100dvh;width:100%;max-width:520px;margin:0 auto;
   padding:20px 16px 28px;display:flex;flex-direction:column;gap:14px;
   position:relative;overflow:hidden;
+  transform:translateZ(0);-webkit-transform:translateZ(0);
 }
 .qs-bg-glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(90px);opacity:0.08;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0;animation:glowPulse 3s infinite;transition:background 0.5s}
 
-.qs-topbar{display:flex;flex-direction:column;gap:8px;position:relative;z-index:1}
-.qs-topbar-row1{display:flex;align-items:center;gap:10px}
-.qs-topbar-row2{display:flex;align-items:center;gap:10px;justify-content:flex-end}
-.qs-topbar-divider{width:1px;height:26px;background:#1e3a5f;flex-shrink:0}
-.qs-lives{display:flex;gap:6px}
-.qs-heart{font-size:22px;transition:all 0.3s}
+.qs-topbar{display:flex;align-items:center;gap:6px;position:relative;z-index:1;flex-wrap:wrap;row-gap:8px}
+.qs-topbar-spacer{flex:1;min-width:4px}
+.qs-topbar-divider{width:1px;height:24px;background:#1e3a5f;flex-shrink:0}
+.qs-lives{display:flex;gap:4px;flex-shrink:0}
+.qs-heart{font-size:19px;transition:all 0.3s}
 .qs-heart.dead{animation:heartbeat 0.4s ease}
-.qs-score-wrap{position:relative}
-.qs-score{font-family:'Bebas Neue',sans-serif;font-size:22px;color:#f59e0b;background:#0f172a;border:1px solid #f59e0b33;border-radius:20px;padding:4px 14px}
-.qs-score span{font-size:12px;color:#475569;margin-left:2px}
-.qs-streak{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--sc);background:color-mix(in srgb,var(--sc) 15%,transparent);border:1px solid color-mix(in srgb,var(--sc) 40%,transparent);border-radius:20px;padding:4px 12px;animation:streakPop 0.4s ease}
+.qs-score-wrap{position:relative;flex-shrink:0}
+.qs-score{font-family:'Bebas Neue',sans-serif;font-size:19px;color:#f59e0b;background:#0f172a;border:1px solid #f59e0b33;border-radius:18px;padding:3px 11px;white-space:nowrap}
+.qs-score span{font-size:11px;color:#475569;margin-left:2px}
+.qs-streak{font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--sc);background:color-mix(in srgb,var(--sc) 15%,transparent);border:1px solid color-mix(in srgb,var(--sc) 40%,transparent);border-radius:18px;padding:3px 9px;animation:streakPop 0.4s ease;flex-shrink:0;white-space:nowrap}
 
-.qs-ll-mini-row{display:flex;gap:8px;flex:1;min-width:0}
+.qs-ll-mini-row{display:flex;gap:6px;flex-shrink:0}
 .qs-ll-mini{
-  display:flex;align-items:center;justify-content:center;gap:4px;
+  display:flex;align-items:center;justify-content:center;gap:3px;
   background:linear-gradient(135deg,#0f172a,#1e293b);
-  border:1.5px solid #1e3a5f;border-radius:10px;padding:6px 10px;
+  border:1.5px solid #1e3a5f;border-radius:9px;padding:5px 8px;
   transition:all 0.2s;position:relative;flex-shrink:0;
 }
-.qs-ll-mini:hover:not(:disabled){border-color:#a78bfa;box-shadow:0 3px 12px #a78bfa22}
-.qs-ll-mini-icon{font-family:'Bebas Neue',sans-serif;font-size:13px;color:#a78bfa;letter-spacing:0.5px;white-space:nowrap}
+@media (hover: hover) {
+  .qs-ll-mini:hover:not(:disabled){border-color:#a78bfa;box-shadow:0 3px 12px #a78bfa22}
+}
+.qs-ll-mini-icon{font-family:'Bebas Neue',sans-serif;font-size:12px;color:#a78bfa;letter-spacing:0.5px;white-space:nowrap}
 .qs-ll-mini-used{opacity:0.35}
 .qs-ll-mini-strike{position:absolute;inset:0;border-radius:10px;overflow:hidden}
 .qs-ll-mini-strike::after{content:'';position:absolute;top:50%;left:-5%;width:110%;height:1.5px;background:#ef4444;transform:rotate(-20deg)}
@@ -776,7 +780,9 @@ button:disabled{cursor:not-allowed}
   animation:fadeSlideUp 0.35s ease both;
   color:#e2e8f0;width:100%;
 }
-.qs-opt:hover:not(:disabled){transform:translateX(6px);border-color:var(--cc);background:linear-gradient(135deg,#1a2744,#1e2f50)}
+@media (hover: hover) {
+  .qs-opt:hover:not(:disabled){transform:translateX(6px);border-color:var(--cc);background:linear-gradient(135deg,#1a2744,#1e2f50)}
+}
 .qs-opt-label{
   width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;
   font-family:'Bebas Neue',sans-serif;font-size:16px;flex-shrink:0;
@@ -796,9 +802,10 @@ button:disabled{cursor:not-allowed}
 
 /* ── RESULT ─────────────────────────── */
 .rs-root{
-  min-height:100vh;width:100%;max-width:520px;margin:0 auto;
+  min-height:100vh;min-height:100dvh;width:100%;max-width:520px;margin:0 auto;
   padding:28px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   position:relative;overflow:hidden;gap:0;
+  transform:translateZ(0);-webkit-transform:translateZ(0);
 }
 .rs-bg-glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(100px);opacity:0.12;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:glowPulse 2.5s infinite}
 .rs-confetti{position:fixed;width:10px;height:10px;border-radius:2px;animation:confettiFall 2s ease-in both}
@@ -829,7 +836,9 @@ button:disabled{cursor:not-allowed}
   font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px;color:#e2e8f0;
   transition:all 0.2s;margin-top:4px;
 }
-.rs-cta:hover{border-color:#f59e0b;color:#f59e0b;transform:translateY(-2px);box-shadow:0 6px 20px #f59e0b22}
+@media (hover: hover) {
+  .rs-cta:hover{border-color:#f59e0b;color:#f59e0b;transform:translateY(-2px);box-shadow:0 6px 20px #f59e0b22}
+}
       `}</style>
 
       {questions === null && !loadError && (
