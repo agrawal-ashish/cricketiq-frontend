@@ -1,7 +1,7 @@
 // CricketIQ service worker
 // Bump this version string any time you want to force-clear old caches
 // after a deploy (e.g. after updating styles, questions, or game logic).
-const CACHE_NAME = "cricketiq-v8";
+const CACHE_NAME = "cricketiq-v9";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

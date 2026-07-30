@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ── API CONFIG ─────────────────────────────────────────────────────────────
 // Questions now come from the CricketIQ API instead of being bundled here.
 // Point this at wherever the API is running (see cricketiq-api/README.md).
-const API_BASE_URL = "https://cricketiq-api-yjmf.onrender.com";
+const API_BASE_URL = "https://api.cricketiq.club";
 
 // ── FIREBASE CONFIG (Google Sign-In) ────────────────────────────────────────
 // Replace every value below with your own project's config, from:
@@ -25,6 +25,44 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
+
+// ── ADSENSE CONFIG ───────────────────────────────────────────────────────────
+// Replace with your real publisher ID once AdSense approves your site
+// (AdSense dashboard → Account → Account information). Create ad units there
+// too, and replace the two slot IDs below with the real ones for each unit.
+// Everything ad-related stays completely inactive — no ad calls, no empty ad
+// boxes — until you replace this placeholder, so this is safe to ship now.
+const ADSENSE_CLIENT_ID = "ca-pub-XXXXXXXXXXXXXXXX";
+const ADSENSE_ENABLED = ADSENSE_CLIENT_ID !== "ca-pub-XXXXXXXXXXXXXXXX";
+const AD_SLOT_HOME = "XXXXXXXXXX";   // ad unit slot ID for the home screen strip
+const AD_SLOT_RESULT = "XXXXXXXXXX"; // ad unit slot ID for the results screen strip
+
+// Reusable display-ad "strip" — renders nothing at all until ADSENSE_ENABLED
+// is true, so there's no empty/broken-looking ad box before you're approved.
+function AdStrip({ slot }) {
+  const pushedRef = useRef(false);
+  useEffect(() => {
+    if (!ADSENSE_ENABLED || pushedRef.current) return;
+    try {
+      pushedRef.current = true;
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
+    } catch (e) {
+      console.error("AdSense push failed:", e);
+    }
+  }, []);
+
+  if (!ADSENSE_ENABLED) return null;
+
+  return (
+    <ins className="adsbygoogle"
+      style={{ display: "block", width: "100%", minHeight: 90 }}
+      data-ad-client={ADSENSE_CLIENT_ID}
+      data-ad-slot={slot}
+      data-ad-format="auto"
+      data-full-width-responsive="true"
+    />
+  );
+}
 
 // Shuffle options PER question at runtime so correct answer is random position
 function prepareQuestion(q) {
@@ -286,6 +324,12 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
             }
           </div>
         }
+
+        {ADSENSE_ENABLED &&
+          <div className="hs-ad-strip">
+            <AdStrip slot={AD_SLOT_HOME} />
+          </div>
+        }
       </div>
     </div>
   );
@@ -299,6 +343,14 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   // THIS game-over transition (separate from the App-level "ever seen" flag,
   // which persists across sessions).
   const [gateDismissed, setGateDismissed] = useState(false);
+  const shouldShowGate = showSignInGate && !gateDismissed;
+  const dismissGate = () => { setGateDismissed(true); onSignInResolved?.(); };
+
+  // ── Game-over ad interstitial ── (effect itself is defined further down,
+  // after `phase` state exists — see below)
+  const [readyForResults, setReadyForResults] = useState(false);
+  const adTriggeredRef = useRef(false);
+
   // correctSeen = correctly answered IDs (excluded forever across all games)
   const correctSeen   = useRef(new Set(answeredCorrectly));
   // shownThisGame = every question shown in this session + last session (no immediate repeats)
@@ -342,6 +394,31 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   const [lifelines, setLL]      = useState({ ff: true, skip: true });
   const [elim,     setElim]     = useState([]);
   const [phase,    setPhase]    = useState("question");
+
+  // Fires once per game, right before results are shown (after the sign-in
+  // gate, if it was shown). Uses Google's Ad Placement API (adBreak), which
+  // only exists on window once the real AdSense script has loaded — which
+  // only happens after your site is approved and the real publisher ID is
+  // in index.html. Until then, window.adBreak is simply undefined, so this
+  // silently falls through to "show results immediately" — zero risk to the
+  // live game while ads aren't active yet.
+  useEffect(() => {
+    if ((phase !== "gameover" && phase !== "complete") || shouldShowGate || adTriggeredRef.current) return;
+    adTriggeredRef.current = true;
+    if (ADSENSE_ENABLED && typeof window.adBreak === "function") {
+      window.adBreak({
+        type: "next",
+        name: "game_over",
+        // adBreakDone fires reliably whether or not an ad actually showed
+        // (no fill, blocked, frequency-capped, etc.) — safest hook to resume on.
+        adBreakDone: () => setReadyForResults(true),
+      });
+    } else {
+      setReadyForResults(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, shouldShowGate]);
+
   const [particleTrigger, setPT] = useState(0);
   const [showPop,  setShowPop]  = useState(false);
   const [popVal,   setPopVal]   = useState(0);
@@ -415,15 +492,14 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   // Pass shownThisGame back to parent so next game starts without these questions
   const finishGame = (sc, corr) => onEnd(sc, corr, shownThisGame.current);
 
-  const shouldShowGate = showSignInGate && !gateDismissed;
-  const dismissGate = () => { setGateDismissed(true); onSignInResolved?.(); };
-
   if (phase === "gameover") {
     if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
+    if (!readyForResults) return null; // brief moment while adBreak resolves (instant if ads aren't active yet)
     return <ResultScreen score={score} correct={answered - wrong} total={answered} wrong={wrong} reason="gameover" onEnd={() => finishGame(score, answered - wrong)} />;
   }
   if (phase === "complete") {
     if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
+    if (!readyForResults) return null;
     return <ResultScreen score={score} correct={answered} total={answered} wrong={wrong} reason="complete" onEnd={() => finishGame(score, answered)} />;
   }
 
@@ -679,6 +755,12 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
         <RippleBtn className="rs-cta" onClick={onEnd}>
           🏠 BACK TO HOME
         </RippleBtn>
+
+        {ADSENSE_ENABLED &&
+          <div className="rs-ad-strip">
+            <AdStrip slot={AD_SLOT_RESULT} />
+          </div>
+        }
       </div>
     </div>
   );
@@ -914,6 +996,8 @@ button:disabled{cursor:not-allowed}
 .hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;margin-top:2px}
 .hs-google-btn{width:100%}
 .hs-signin-error{font-size:11px;color:#ef4444;text-align:center;max-width:280px;margin:0}
+.hs-ad-strip{width:100%;margin-top:8px}
+.rs-ad-strip{width:100%;margin-top:8px}
 @keyframes shineSlide{0%{left:-100%}50%,100%{left:150%}}
 
 .hs-footer{font-size:11px;color:#334155;letter-spacing:2px;text-transform:uppercase}
