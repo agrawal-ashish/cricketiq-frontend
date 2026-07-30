@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ── API CONFIG ─────────────────────────────────────────────────────────────
 // Questions now come from the CricketIQ API instead of being bundled here.
 // Point this at wherever the API is running (see cricketiq-api/README.md).
-const API_BASE_URL = "http://localhost:4000";
+const API_BASE_URL = "https://cricketiq-api-yjmf.onrender.com";
 
 // Shuffle options PER question at runtime so correct answer is random position
 function prepareQuestion(q) {
