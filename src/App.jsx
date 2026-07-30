@@ -14,7 +14,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
 
 const firebaseConfig = {
-apiKey: "AIzaSyC2yyapAkZmri4JXHiLU2kFWsMYB8dUHoM",
+  apiKey: "AIzaSyC2yyapAkZmri4JXHiLU2kFWsMYB8dUHoM",
   authDomain: "cricketiq-2bca5.firebaseapp.com",
   projectId: "cricketiq-2bca5",
   storageBucket: "cricketiq-2bca5.firebasestorage.app",
@@ -150,9 +150,20 @@ function ScorePop({ value, visible }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
-function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut }) {
+function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignInLink }) {
   const [entered, setEntered] = useState(false);
   useEffect(() => { setTimeout(() => setEntered(true), 80); }, []);
+
+  const [signInStatus, setSignInStatus] = useState("idle"); // idle | working | error
+  const handleSignIn = async () => {
+    setSignInStatus("working");
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      console.error("Google sign-in failed:", err);
+      setSignInStatus("error");
+    }
+  };
 
   return (
     <div className="hs-root">
@@ -230,6 +241,17 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut }) {
           </span>
           <div className="hs-cta-shine" />
         </RippleBtn>
+
+        {!user && showSignInLink &&
+          <div className="hs-signin-row">
+            <RippleBtn className="hs-signin-link" onClick={handleSignIn} disabled={signInStatus === "working"}>
+              {signInStatus === "working" ? "Signing in…" : "Sign in with Google"}
+            </RippleBtn>
+            {signInStatus === "error" &&
+              <p className="hs-signin-error">Couldn't sign in — check that popups aren't blocked, then try again.</p>
+            }
+          </div>
+        }
       </div>
     </div>
   );
@@ -843,6 +865,9 @@ button:disabled{cursor:not-allowed}
 .hs-cta-inner{display:flex;align-items:center;justify-content:center;gap:12px;padding:18px 32px;font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:3px;color:#0f172a}
 .hs-cta-arrow{font-size:18px;animation:none;transition:transform 0.2s}
 .hs-cta-shine{position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.2),transparent);animation:shineSlide 3s infinite;pointer-events:none}
+.hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:-6px}
+.hs-signin-link{font-size:13px;color:#94a3b8;text-decoration:underline;background:none;padding:6px}
+.hs-signin-error{font-size:11px;color:#ef4444;text-align:center;max-width:280px;margin:0}
 @keyframes shineSlide{0%{left:-100%}50%,100%{left:150%}}
 
 .hs-footer{font-size:11px;color:#334155;letter-spacing:2px;text-transform:uppercase}
@@ -947,7 +972,7 @@ button:disabled{cursor:not-allowed}
 
 .rs-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;opacity:0;transition:opacity 0.5s,transform 0.5s;transform:translateY(20px)}
 .rs-show{opacity:1;transform:translateY(0)}
-.rs-icon-wrap{position:relative;display:inline-block;margin-bottom:4px}
+.rs-icon-wrap{position:relative;display:inline-block;margin-bottom:16px}
 .rs-icon{font-size:80px;display:block;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
 .rs-icon-ring{position:absolute;inset:-12px;border-radius:50%;border:2px solid;opacity:0.4;animation:ringRotate 8s linear infinite}
 .rs-result-label{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:4px}
@@ -1047,6 +1072,7 @@ button:disabled{cursor:not-allowed}
           totalQuestions={questions.length}
           user={user}
           onSignOut={() => signOut(auth)}
+          showSignInLink={hasSeenSignInPrompt}
         />
       )}
       {questions !== null && screen === "quiz" && (
