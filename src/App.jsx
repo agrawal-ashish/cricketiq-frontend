@@ -5,6 +5,27 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // Point this at wherever the API is running (see cricketiq-api/README.md).
 const API_BASE_URL = "https://cricketiq-api-yjmf.onrender.com";
 
+// ── FIREBASE CONFIG (Google Sign-In) ────────────────────────────────────────
+// Replace every value below with your own project's config, from:
+// Firebase Console → Project Settings → General → Your apps → SDK setup and
+// configuration. These values are safe to be public in client code — Firebase
+// security relies on Security Rules, not on hiding this config.
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+
+const firebaseConfig = {
+apiKey: "AIzaSyC2yyapAkZmri4JXHiLU2kFWsMYB8dUHoM",
+  authDomain: "cricketiq-2bca5.firebaseapp.com",
+  projectId: "cricketiq-2bca5",
+  storageBucket: "cricketiq-2bca5.firebasestorage.app",
+  messagingSenderId: "806707387268",
+  appId: "1:806707387268:web:689b4f3f13b187e7789bd1",
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+
 // Shuffle options PER question at runtime so correct answer is random position
 function prepareQuestion(q) {
   const shuffled = [...q.opts].sort(() => Math.random() - 0.5);
@@ -129,7 +150,7 @@ function ScorePop({ value, visible }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
-function HomeScreen({ onStart, stats, totalQuestions }) {
+function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut }) {
   const [entered, setEntered] = useState(false);
   useEffect(() => { setTimeout(() => setEntered(true), 80); }, []);
 
@@ -143,6 +164,16 @@ function HomeScreen({ onStart, stats, totalQuestions }) {
       <div className="hs-ring hs-ring-1" />
       <div className="hs-ring hs-ring-2" />
       <div className="hs-ring hs-ring-3" />
+
+      {user &&
+        <button className="hs-user-chip" onClick={onSignOut} title="Tap to sign out">
+          {user.photoURL
+            ? <img src={user.photoURL} alt="" className="hs-user-avatar" referrerPolicy="no-referrer" />
+            : <span className="hs-user-avatar hs-user-avatar-fallback">{(user.displayName || "?")[0]}</span>
+          }
+          <span className="hs-user-name">{user.displayName || user.email}</span>
+        </button>
+      }
 
       <div className={`hs-content ${entered ? "hs-in" : ""}`}>
         {/* Logo */}
@@ -207,7 +238,11 @@ function HomeScreen({ onStart, stats, totalQuestions }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkCorrect }) {
+function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkCorrect, showSignInGate, onSignInResolved }) {
+  // Tracks whether the sign-in gate has already been shown+dismissed within
+  // THIS game-over transition (separate from the App-level "ever seen" flag,
+  // which persists across sessions).
+  const [gateDismissed, setGateDismissed] = useState(false);
   // correctSeen = correctly answered IDs (excluded forever across all games)
   const correctSeen   = useRef(new Set(answeredCorrectly));
   // shownThisGame = every question shown in this session + last session (no immediate repeats)
@@ -324,8 +359,17 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   // Pass shownThisGame back to parent so next game starts without these questions
   const finishGame = (sc, corr) => onEnd(sc, corr, shownThisGame.current);
 
-  if (phase === "gameover") return <ResultScreen score={score} correct={answered - wrong} total={answered} wrong={wrong} reason="gameover" onEnd={() => finishGame(score, answered - wrong)} />;
-  if (phase === "complete") return <ResultScreen score={score} correct={answered} total={answered} wrong={wrong} reason="complete" onEnd={() => finishGame(score, answered)} />;
+  const shouldShowGate = showSignInGate && !gateDismissed;
+  const dismissGate = () => { setGateDismissed(true); onSignInResolved?.(); };
+
+  if (phase === "gameover") {
+    if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
+    return <ResultScreen score={score} correct={answered - wrong} total={answered} wrong={wrong} reason="gameover" onEnd={() => finishGame(score, answered - wrong)} />;
+  }
+  if (phase === "complete") {
+    if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
+    return <ResultScreen score={score} correct={answered} total={answered} wrong={wrong} reason="complete" onEnd={() => finishGame(score, answered)} />;
+  }
 
   const livesLeft = MAX_WRONG - wrong;
   const labels    = ["A", "B", "C", "D"];
@@ -458,12 +502,59 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SIGN-IN GATE — shown once, right after the player's first-ever completed game
+// ═══════════════════════════════════════════════════════════════════════════════
+function SignInGate({ onContinue }) {
+  const [status, setStatus] = useState("idle"); // idle | working | error
+  const [show, setShow] = useState(false);
+  useEffect(() => { setTimeout(() => setShow(true), 100); }, []);
+
+  const handleGoogleSignIn = async () => {
+    setStatus("working");
+    try {
+      await signInWithPopup(auth, googleProvider);
+      onContinue();
+    } catch (err) {
+      // Common cause: popup blocked, or the user closed it — let them retry or skip
+      console.error("Google sign-in failed:", err);
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div className="sg-root">
+      <div className={`sg-content ${show ? "sg-in" : ""}`}>
+        <div className="sg-icon">🏏</div>
+        <h2 className="sg-title">Nice first round!</h2>
+        <p className="sg-sub">Sign in with Google to save your progress — pick up right where you left off, on any device.</p>
+
+        <RippleBtn className="sg-google-btn" onClick={handleGoogleSignIn} disabled={status === "working"}>
+          <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink:0 }}>
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.97l2.99 2.33C4.66 5.17 6.65 3.58 9 3.58z"/>
+          </svg>
+          {status === "working" ? "Signing in…" : "Continue with Google"}
+        </RippleBtn>
+
+        {status === "error" &&
+          <p className="sg-error">Couldn't complete sign-in — check that popups aren't blocked, then try again.</p>
+        }
+
+        <button className="sg-skip" onClick={onContinue}>Skip for now</button>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // RESULT SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
 function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
   const [show, setShow] = useState(false);
   useEffect(() => { setTimeout(() => setShow(true), 100); }, []);
-
   const pct  = Math.round((correct / total) * 100);
   const rank = score >= 90
     ? { title:"CRICKET GOD",    sub:"Absolute legend of the game 🐐",  color:"#f59e0b", icon:"👑" }
@@ -546,6 +637,7 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
 // continuous play session.
 const LS_CORRECT_KEY = "cricketiq_correct_ids";
 const LS_RECENT_KEY  = "cricketiq_recent_ids";
+const LS_SEEN_SIGNIN_KEY = "cricketiq_seen_signin_prompt"; // "1" once shown, whether signed in or skipped
 
 function loadIdSet(key) {
   try {
@@ -566,6 +658,13 @@ function saveIdSet(key, set) {
   }
 }
 
+function loadFlag(key) {
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
+function saveFlag(key, value) {
+  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -579,6 +678,33 @@ export default function App() {
   // (new tab, reopened browser, different day) keeps getting fresh questions.
   useEffect(() => { saveIdSet(LS_CORRECT_KEY, answered); }, [answered]);
   useEffect(() => { saveIdSet(LS_RECENT_KEY, recentlySeen); }, [recentlySeen]);
+
+  // ── Google Sign-In gate ──
+  // Shown once, right after the player's first-ever completed game (win or
+  // lose). Never asked again after that — whether they signed in or skipped.
+  const [user, setUser] = useState(null); // Firebase user object, or null
+  const [authReady, setAuthReady] = useState(false); // true once Firebase has checked for an existing session
+  const [hasSeenSignInPrompt, setHasSeenSignInPrompt] = useState(() => loadFlag(LS_SEEN_SIGNIN_KEY));
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthReady(true);
+      if (firebaseUser) { setHasSeenSignInPrompt(true); saveFlag(LS_SEEN_SIGNIN_KEY, true); }
+    });
+    return unsubscribe;
+  }, []);
+
+  const markSignInPromptSeen = () => {
+    setHasSeenSignInPrompt(true);
+    saveFlag(LS_SEEN_SIGNIN_KEY, true);
+  };
+
+  // Only gate the very first-ever completed game: no prior games this
+  // session/device (stats.gamesPlayed === 0), not already signed in, and
+  // not already shown/dismissed before. authReady avoids a flash of the
+  // gate before Firebase has had a chance to report an existing session.
+  const showSignInGate = authReady && stats.gamesPlayed === 0 && !user && !hasSeenSignInPrompt;
 
   // Questions now come from the CricketIQ API instead of a bundled array.
   const [questions, setQuestions] = useState(null); // null = not loaded yet
@@ -656,6 +782,15 @@ button:disabled{cursor:not-allowed}
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
 }
 .hs-light{position:absolute;width:500px;height:500px;border-radius:50%;pointer-events:none;animation:lightSweep 4s infinite ease-in-out;}
+.hs-user-chip{
+  position:absolute;top:16px;right:16px;z-index:2;
+  display:flex;align-items:center;gap:6px;
+  background:#0f172a;border:1px solid #1e3a5f;border-radius:20px;
+  padding:4px 12px 4px 4px;
+}
+.hs-user-avatar{width:24px;height:24px;border-radius:50%;object-fit:cover}
+.hs-user-avatar-fallback{display:flex;align-items:center;justify-content:center;background:#334155;color:#e2e8f0;font-size:12px;font-weight:700}
+.hs-user-name{font-size:11px;color:#94a3b8;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hs-light-1{background:radial-gradient(circle,#f59e0b22 0%,transparent 70%);top:-150px;left:-100px;animation-delay:0s}
 .hs-light-2{background:radial-gradient(circle,#ef444422 0%,transparent 70%);top:-100px;right:-120px;animation-delay:1.5s}
 .hs-light-3{background:radial-gradient(circle,#38bdf822 0%,transparent 70%);bottom:-200px;left:50%;transform:translateX(-50%);animation-delay:3s}
@@ -839,6 +974,32 @@ button:disabled{cursor:not-allowed}
 @media (hover: hover) {
   .rs-cta:hover{border-color:#f59e0b;color:#f59e0b;transform:translateY(-2px);box-shadow:0 6px 20px #f59e0b22}
 }
+
+/* ── SIGN-IN GATE ─────────────────────── */
+.sg-root{
+  min-height:100vh;min-height:100dvh;width:100%;max-width:520px;margin:0 auto;
+  padding:28px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+  transform:translateZ(0);-webkit-transform:translateZ(0);
+}
+.sg-content{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%;text-align:center;opacity:0;transform:translateY(20px);transition:opacity 0.5s,transform 0.5s}
+.sg-in{opacity:1;transform:translateY(0)}
+.sg-icon{font-size:64px;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
+.sg-title{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:2px;margin:0;color:#e2e8f0}
+.sg-sub{font-size:14px;color:#94a3b8;line-height:1.5;max-width:340px;margin:0 0 8px}
+.sg-google-btn{
+  width:100%;max-width:320px;padding:14px 20px;border-radius:14px;
+  background:#fff;color:#1f1f1f;
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  font-family:'Barlow',sans-serif;font-size:15px;font-weight:600;
+  transition:all 0.2s;box-shadow:0 4px 16px rgba(0,0,0,0.2);
+}
+@media (hover: hover) {
+  .sg-google-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.3)}
+}
+.sg-google-btn:disabled{opacity:0.7}
+.sg-error{font-size:12px;color:#ef4444;max-width:300px;margin:0}
+.sg-skip{margin-top:4px;font-size:13px;color:#64748b;text-decoration:underline;background:none;padding:8px}
       `}</style>
 
       {questions === null && !loadError && (
@@ -880,7 +1041,13 @@ button:disabled{cursor:not-allowed}
       )}
 
       {questions !== null && screen === "home" && (
-        <HomeScreen onStart={() => setScreen("quiz")} stats={stats} totalQuestions={questions.length} />
+        <HomeScreen
+          onStart={() => setScreen("quiz")}
+          stats={stats}
+          totalQuestions={questions.length}
+          user={user}
+          onSignOut={() => signOut(auth)}
+        />
       )}
       {questions !== null && screen === "quiz" && (
         <QuizScreen
@@ -894,6 +1061,8 @@ button:disabled{cursor:not-allowed}
           answeredCorrectly={answered}
           recentlySeen={recentlySeen}
           onMarkCorrect={id => setAnswered(prev => new Set([...prev, id]))}
+          showSignInGate={showSignInGate}
+          onSignInResolved={markSignInPromptSeen}
         />
       )}
     </>
