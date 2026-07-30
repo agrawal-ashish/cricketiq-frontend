@@ -641,9 +641,8 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
       ))}
 
       <div className={`rs-content ${show ? "rs-show":""}`}>
-        <div className="rs-icon-wrap">
+        <div className="rs-icon-wrap" style={{ "--ring-color": rank.color }}>
           <div className="rs-icon">{rank.icon}</div>
-          <div className="rs-icon-ring" style={{ borderColor: rank.color }} />
         </div>
 
         <div className="rs-result-label" style={{ color: rank.color }}>{rank.title}</div>
@@ -1019,9 +1018,9 @@ button:disabled{cursor:not-allowed}
 
 .rs-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;opacity:0;transition:opacity 0.5s,transform 0.5s;transform:translateY(20px)}
 .rs-show{opacity:1;transform:translateY(0)}
-.rs-icon-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:96px;height:96px;margin:0 auto 24px}
+.rs-icon-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:96px;height:96px;margin:0 auto 24px;isolation:isolate}
+.rs-icon-wrap::before{content:'';position:absolute;inset:-12px;border-radius:50%;border:2px solid var(--ring-color,#94a3b8);opacity:0.4;animation:ringRotate 8s linear infinite;pointer-events:none;z-index:-1}
 .rs-icon{font-size:80px;line-height:1;display:flex;align-items:center;justify-content:center;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
-.rs-icon-ring{position:absolute;inset:-12px;border-radius:50%;border:2px solid;opacity:0.4;animation:ringRotate 8s linear infinite}
 .rs-result-label{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:4px}
 .rs-result-sub{font-size:14px;color:#94a3b8;text-align:center}
 .rs-gameover-tag{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:3px;color:#ef4444;background:#ef444411;border:1px solid #ef444433;border-radius:20px;padding:4px 14px}
@@ -1056,7 +1055,7 @@ button:disabled{cursor:not-allowed}
 }
 .sg-content{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%;text-align:center;opacity:0;transform:translateY(20px);transition:opacity 0.5s,transform 0.5s}
 .sg-in{opacity:1;transform:translateY(0)}
-.sg-icon{font-size:64px;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
+.sg-icon{font-size:64px;line-height:1;display:flex;align-items:center;justify-content:center;height:80px;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
 .sg-title{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:2px;margin:0;color:#e2e8f0}
 .sg-sub{font-size:14px;color:#94a3b8;line-height:1.5;max-width:340px;margin:0 0 8px}
 .sg-google-btn{
