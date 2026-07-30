@@ -816,7 +816,7 @@ export default function App() {
 @keyframes streakPop{0%{transform:scale(0.5) rotate(-5deg);opacity:0}60%{transform:scale(1.15) rotate(2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
 @keyframes glowPulse{0%,100%{opacity:0.18}50%{opacity:0.32}}
 @keyframes confettiFall{0%{transform:translateY(-20px) rotate(0);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0}}
-@keyframes ringRotate{from{transform:translate(-50%,-50%) rotate(0)}to{transform:translate(-50%,-50%) rotate(360deg)}}
+@keyframes ringRotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 @keyframes dotPop{from{transform:scale(0)}to{transform:scale(1)}}
 @keyframes cardFlipOut{0%{transform:rotateY(0)}100%{transform:rotateY(-90deg)}}
 @keyframes barGrow{from{width:0}to{width:100%}}
