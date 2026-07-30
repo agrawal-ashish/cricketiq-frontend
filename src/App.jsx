@@ -165,6 +165,25 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
     }
   };
 
+  // Tapping the user chip opens a small confirm menu instead of signing out
+  // immediately — signing out is a deliberate second action from there.
+  const [showLogoutMenu, setShowLogoutMenu] = useState(false);
+  const userMenuRef = useRef(null);
+  useEffect(() => {
+    if (!showLogoutMenu) return;
+    const handleOutside = (e) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setShowLogoutMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+    };
+  }, [showLogoutMenu]);
+
   return (
     <div className="hs-root">
       {/* Stadium lights */}
@@ -177,13 +196,22 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
       <div className="hs-ring hs-ring-3" />
 
       {user &&
-        <button className="hs-user-chip" onClick={onSignOut} title="Tap to sign out">
-          {user.photoURL
-            ? <img src={user.photoURL} alt="" className="hs-user-avatar" referrerPolicy="no-referrer" />
-            : <span className="hs-user-avatar hs-user-avatar-fallback">{(user.displayName || "?")[0]}</span>
+        <div className="hs-user-wrap" ref={userMenuRef}>
+          <button className="hs-user-chip" onClick={() => setShowLogoutMenu(v => !v)} title="Account">
+            {user.photoURL
+              ? <img src={user.photoURL} alt="" className="hs-user-avatar" referrerPolicy="no-referrer" />
+              : <span className="hs-user-avatar hs-user-avatar-fallback">{(user.displayName || "?")[0]}</span>
+            }
+            <span className="hs-user-name">{user.displayName || user.email}</span>
+          </button>
+          {showLogoutMenu &&
+            <div className="hs-user-menu">
+              <button className="hs-user-menu-item" onClick={() => { setShowLogoutMenu(false); onSignOut(); }}>
+                Log out
+              </button>
+            </div>
           }
-          <span className="hs-user-name">{user.displayName || user.email}</span>
-        </button>
+        </div>
       }
 
       <div className={`hs-content ${entered ? "hs-in" : ""}`}>
@@ -244,8 +272,14 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
 
         {!user && showSignInLink &&
           <div className="hs-signin-row">
-            <RippleBtn className="hs-signin-link" onClick={handleSignIn} disabled={signInStatus === "working"}>
-              {signInStatus === "working" ? "Signing in…" : "Sign in with Google"}
+            <RippleBtn className="sg-google-btn hs-google-btn" onClick={handleSignIn} disabled={signInStatus === "working"}>
+              <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink:0 }}>
+                <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/>
+                <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 0 0 9 18z"/>
+                <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.33z"/>
+                <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.97l2.99 2.33C4.66 5.17 6.65 3.58 9 3.58z"/>
+              </svg>
+              {signInStatus === "working" ? "Signing in…" : "Continue with Google"}
             </RippleBtn>
             {signInStatus === "error" &&
               <p className="hs-signin-error">Couldn't sign in — check that popups aren't blocked, then try again.</p>
@@ -804,8 +838,8 @@ button:disabled{cursor:not-allowed}
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
 }
 .hs-light{position:absolute;width:500px;height:500px;border-radius:50%;pointer-events:none;animation:lightSweep 4s infinite ease-in-out;}
+.hs-user-wrap{position:absolute;top:16px;right:16px;z-index:3}
 .hs-user-chip{
-  position:absolute;top:16px;right:16px;z-index:2;
   display:flex;align-items:center;gap:6px;
   background:#0f172a;border:1px solid #1e3a5f;border-radius:20px;
   padding:4px 12px 4px 4px;
@@ -813,6 +847,19 @@ button:disabled{cursor:not-allowed}
 .hs-user-avatar{width:24px;height:24px;border-radius:50%;object-fit:cover}
 .hs-user-avatar-fallback{display:flex;align-items:center;justify-content:center;background:#334155;color:#e2e8f0;font-size:12px;font-weight:700}
 .hs-user-name{font-size:11px;color:#94a3b8;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hs-user-menu{
+  position:absolute;top:calc(100% + 6px);right:0;min-width:120px;
+  background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;
+  padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  animation:scaleIn 0.15s ease both;transform-origin:top right;
+}
+.hs-user-menu-item{
+  width:100%;text-align:left;font-size:13px;color:#f87171;
+  padding:8px 12px;border-radius:8px;
+}
+@media (hover: hover) {
+  .hs-user-menu-item:hover{background:#ef444422}
+}
 .hs-light-1{background:radial-gradient(circle,#f59e0b22 0%,transparent 70%);top:-150px;left:-100px;animation-delay:0s}
 .hs-light-2{background:radial-gradient(circle,#ef444422 0%,transparent 70%);top:-100px;right:-120px;animation-delay:1.5s}
 .hs-light-3{background:radial-gradient(circle,#38bdf822 0%,transparent 70%);bottom:-200px;left:50%;transform:translateX(-50%);animation-delay:3s}
@@ -865,8 +912,8 @@ button:disabled{cursor:not-allowed}
 .hs-cta-inner{display:flex;align-items:center;justify-content:center;gap:12px;padding:18px 32px;font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:3px;color:#0f172a}
 .hs-cta-arrow{font-size:18px;animation:none;transition:transform 0.2s}
 .hs-cta-shine{position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.2),transparent);animation:shineSlide 3s infinite;pointer-events:none}
-.hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:-6px}
-.hs-signin-link{font-size:13px;color:#94a3b8;text-decoration:underline;background:none;padding:6px}
+.hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;margin-top:2px}
+.hs-google-btn{width:100%}
 .hs-signin-error{font-size:11px;color:#ef4444;text-align:center;max-width:280px;margin:0}
 @keyframes shineSlide{0%{left:-100%}50%,100%{left:150%}}
 
@@ -972,8 +1019,8 @@ button:disabled{cursor:not-allowed}
 
 .rs-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;opacity:0;transition:opacity 0.5s,transform 0.5s;transform:translateY(20px)}
 .rs-show{opacity:1;transform:translateY(0)}
-.rs-icon-wrap{position:relative;display:inline-block;margin-bottom:16px}
-.rs-icon{font-size:80px;display:block;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
+.rs-icon-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:96px;height:96px;margin:0 auto 24px}
+.rs-icon{font-size:80px;line-height:1;display:flex;align-items:center;justify-content:center;animation:scaleIn 0.6s cubic-bezier(.34,1.56,.64,1) both}
 .rs-icon-ring{position:absolute;inset:-12px;border-radius:50%;border:2px solid;opacity:0.4;animation:ringRotate 8s linear infinite}
 .rs-result-label{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:4px}
 .rs-result-sub{font-size:14px;color:#94a3b8;text-align:center}
