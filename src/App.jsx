@@ -280,7 +280,6 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
 
         {/* Rules */}
         <div className="hs-rules">
-          <div className="hs-rules-title">HOW TO PLAY</div>
           <div className="hs-rules-grid">
             {[
               ["🎯","ENDLESS QUESTIONS","Keep answering correctly to keep going!"],
@@ -979,7 +978,6 @@ button:disabled{cursor:not-allowed}
 .hs-stat-lbl{font-size:10px;color:#475569;letter-spacing:2px;text-transform:uppercase;margin-top:2px}
 
 .hs-rules{width:100%;background:linear-gradient(135deg,#0f172a,#1a2744);border:1px solid #1e3a5f;border-radius:16px;padding:18px 16px}
-.hs-rules-title{font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:4px;color:#f59e0b;margin-bottom:14px}
 .hs-rules-grid{display:flex;flex-direction:column;gap:12px}
 .hs-rule-item{display:flex;gap:12px;align-items:flex-start}
 .hs-rule-icon{font-size:20px;flex-shrink:0;margin-top:1px}
