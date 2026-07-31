@@ -362,6 +362,16 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   const shownThisGame = useRef(new Set([...answeredCorrectly, ...recentlySeen]));
   // currentQIdRef = stable ref to the on-screen question ID — always excluded from pickNext
   const currentQIdRef = useRef(null);
+  // inputLockedRef = true for a brief window right after a new question renders.
+  // Guards against a real issue on slower touch-response browsers (notably iOS
+  // Safari): if someone taps an answer, doesn't see the reveal animate fast
+  // enough, and taps again out of confusion, those extra taps can end up
+  // arriving just as the NEXT question mounts — landing on a freshly-enabled
+  // button at the same screen position and silently answering it without the
+  // user meaning to. This swallows any taps in that brief post-mount window,
+  // which real intentional answers (read the question, then tap) never fall
+  // inside anyway.
+  const inputLockedRef = useRef(false);
 
   // Pick the next question: never repeats correct answers, current question, or session-seen questions
   const pickNext = () => {
@@ -445,6 +455,8 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
       setCurrentQ(next);
       setPhase("question");
       setTimerKey(k => k + 1);
+      inputLockedRef.current = true;
+      setTimeout(() => { inputLockedRef.current = false; }, 350);
     }, 420);
   }, []);
 
@@ -458,7 +470,7 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   }, [phase, chosen, wrong, goNext]);
 
   const handleAnswer = (idx) => {
-    if (phase !== "question" || chosen !== null || timeUp) return;
+    if (phase !== "question" || chosen !== null || timeUp || inputLockedRef.current) return;
     setChosen(idx);
     setAnswered(a => a + 1);
     const correct = idx === q.correctIdx;
