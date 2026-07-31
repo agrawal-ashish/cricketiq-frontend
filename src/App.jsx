@@ -637,7 +637,7 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
           return (
             <RippleBtn key={idx}
               className={`qs-opt qs-opt-${state}`}
-              style={{ "--cc": catMeta.color, animationDelay:`${idx * 0.07}s` }}
+              style={{ "--cc": catMeta.color }}
               onClick={() => handleAnswer(idx)}
               disabled={isElim || chosen !== null || timeUp}
             >
@@ -721,10 +721,11 @@ function waitForFonts() {
 async function generateShareCardBlob({ score, rank, correct, wrong, maxStreak, userName }) {
   await waitForFonts();
 
-  const W = 1080, H = 1600;
+  const W = 1080, H = 1350;
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
+  ctx.textAlign = "center";
 
   // Background
   const bg = ctx.createLinearGradient(0, 0, 0, H);
@@ -733,118 +734,132 @@ async function generateShareCardBlob({ score, rank, correct, wrong, maxStreak, u
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Ambient glows
-  const glow1 = ctx.createRadialGradient(W/2, 340, 20, W/2, 340, 360);
+  // ── Layout: each step reports its own real height via ctx.measureText's
+  // actualBoundingBoxAscent/Descent, rather than guessed pixel offsets —
+  // that guessing is exactly what caused the subtitle/score overlap before.
+  // "text" steps are baseline-positioned (need ascent to place correctly);
+  // "stats"/"pill" are fixed-height blocks positioned from their top edge.
+  const GAP_TIGHT = 12, GAP_SMALL = 26, GAP_MED = 42, GAP_LARGE = 58;
+  const cleanSub = rank.sub.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim();
+
+  const steps = [
+    { type:"text", text:"CRICKETIQ", font:"700 56px 'Bebas Neue'", grad:["#b5d99c","#ffff82"], gap:GAP_LARGE },
+    { type:"text", text:rank.icon, font:"120px sans-serif", fill:"#ffffff", gap:GAP_SMALL },
+    { type:"text", text:rank.title, font:"700 50px 'Bebas Neue'", fill:rank.color, gap:GAP_TIGHT },
+    { type:"text", text:cleanSub, font:"400 28px 'Barlow Condensed', sans-serif", fill:"#94a3b8", gap:GAP_LARGE },
+    ...(userName ? [{ type:"text", text:`${userName.toUpperCase()} SCORED`, font:"600 28px 'Barlow Condensed', sans-serif", fill:"#94a3b8", letterSpacing:"3px", gap:GAP_MED }] : []),
+    { type:"text", text:String(score), font:"700 200px 'Bebas Neue'", fill:rank.color, gap: userName ? GAP_LARGE : GAP_TIGHT },
+    ...(!userName ? [{ type:"text", text:"POINTS", font:"700 32px 'Bebas Neue'", fill:"#475569", letterSpacing:"6px", gap:GAP_LARGE }] : []),
+    { type:"stats", gap:GAP_LARGE },
+    { type:"text", text:"Think you know cricket better?", font:"400 28px 'Barlow Condensed', sans-serif", fill:"#94a3b8", gap:GAP_MED },
+    { type:"pill", gap:0 },
+  ];
+
+  // Measure pass
+  const metrics = steps.map(s => {
+    if (s.type === "stats") return { ascent:0, descent:90 };
+    if (s.type === "pill")  return { ascent:0, descent:76 };
+    ctx.font = s.font;
+    const m = ctx.measureText(s.text);
+    const fontPx = parseInt(s.font.match(/(\d+)px/)[1], 10);
+    return {
+      ascent:  m.actualBoundingBoxAscent  || fontPx * 0.75,
+      descent: m.actualBoundingBoxDescent || fontPx * 0.2,
+    };
+  });
+  const totalHeight = metrics.reduce((sum, m, i) => sum + m.ascent + m.descent + steps[i].gap, 0);
+
+  // Center the block, biased slightly toward the top third — reads better
+  // than dead-center for a card shaped like this.
+  let cursorY = Math.max(60, (H - totalHeight) / 2 - 30);
+  const blockStartY = cursorY;
+
+  // Ambient glows, anchored to where the content actually ends up (not
+  // fixed absolute positions), so they stay visually correct regardless of
+  // exactly how tall the final content block is.
+  const glow1cy = blockStartY + totalHeight * 0.22;
+  const glow1 = ctx.createRadialGradient(W/2, glow1cy, 20, W/2, glow1cy, 360);
   glow1.addColorStop(0, "rgba(181,217,156,0.20)");
   glow1.addColorStop(1, "rgba(181,217,156,0)");
   ctx.fillStyle = glow1;
   ctx.fillRect(0, 0, W, H);
 
-  const glow2 = ctx.createRadialGradient(W/2, H - 260, 20, W/2, H - 260, 320);
+  const glow2cy = blockStartY + totalHeight * 0.82;
+  const glow2 = ctx.createRadialGradient(W/2, glow2cy, 20, W/2, glow2cy, 300);
   glow2.addColorStop(0, "rgba(245,158,11,0.12)");
   glow2.addColorStop(1, "rgba(245,158,11,0)");
   ctx.fillStyle = glow2;
   ctx.fillRect(0, 0, W, H);
 
-  ctx.textAlign = "center";
+  // Draw pass
+  steps.forEach((step, i) => {
+    const { ascent, descent } = metrics[i];
+    ctx.font = step.font || "";
+    if (step.letterSpacing) ctx.letterSpacing = step.letterSpacing;
 
-  // Wordmark
-  ctx.font = "700 58px 'Bebas Neue'";
-  const wmGrad = ctx.createLinearGradient(W/2 - 160, 0, W/2 + 160, 0);
-  wmGrad.addColorStop(0, "#b5d99c");
-  wmGrad.addColorStop(1, "#ffff82");
-  ctx.fillStyle = wmGrad;
-  ctx.fillText("CRICKETIQ", W/2, 130);
-
-  // Rank icon (emoji)
-  ctx.font = "128px sans-serif";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(rank.icon, W/2, 320);
-
-  // Rank title + subtitle
-  ctx.font = "700 52px 'Bebas Neue'";
-  ctx.fillStyle = rank.color;
-  ctx.fillText(rank.title, W/2, 420);
-
-  ctx.font = "400 30px 'Barlow Condensed', sans-serif";
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText(rank.sub.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim(), W/2, 464);
-
-  let scoreY = 620;
-  if (userName) {
-    ctx.font = "600 30px 'Barlow Condensed', sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.letterSpacing = "3px";
-    ctx.fillText(`${userName.toUpperCase()} SCORED`, W/2, 560);
-    ctx.letterSpacing = "0px";
-  }
-
-  // Big score
-  ctx.font = "700 220px 'Bebas Neue'";
-  ctx.fillStyle = rank.color;
-  ctx.fillText(String(score), W/2, scoreY);
-
-  if (!userName) {
-    ctx.font = "700 34px 'Bebas Neue'";
-    ctx.fillStyle = "#475569";
-    ctx.letterSpacing = "6px";
-    ctx.fillText("POINTS", W/2, scoreY + 56);
-    ctx.letterSpacing = "0px";
-  }
-
-  // Stats row
-  const statsY = 800;
-  const stats = [
-    { val: correct, lbl: "CORRECT", color: "#34d399" },
-    { val: wrong, lbl: "WRONG", color: "#ef4444" },
-    { val: `${maxStreak}\u{1F525}`, lbl: "BEST STREAK", color: "#f59e0b" },
-  ];
-  const colW = 220;
-  const startX = W/2 - colW;
-  stats.forEach((s, i) => {
-    const x = startX + i * colW;
-    ctx.font = "700 44px 'Bebas Neue'";
-    ctx.fillStyle = s.color;
-    ctx.fillText(String(s.val), x, statsY);
-    ctx.font = "600 20px 'Barlow Condensed', sans-serif";
-    ctx.fillStyle = "#64748b";
-    ctx.letterSpacing = "2px";
-    ctx.fillText(s.lbl, x, statsY + 34);
-    ctx.letterSpacing = "0px";
-    if (i > 0) {
-      ctx.strokeStyle = "#1e3a5f";
-      ctx.lineWidth = 2;
+    if (step.type === "text") {
+      const baselineY = cursorY + ascent;
+      if (step.grad) {
+        const m = ctx.measureText(step.text);
+        const g = ctx.createLinearGradient(W/2 - m.width/2, 0, W/2 + m.width/2, 0);
+        g.addColorStop(0, step.grad[0]);
+        g.addColorStop(1, step.grad[1]);
+        ctx.fillStyle = g;
+      } else {
+        ctx.fillStyle = step.fill;
+      }
+      ctx.fillText(step.text, W/2, baselineY);
+    } else if (step.type === "stats") {
+      const statsBaselineY = cursorY + 44;
+      const statsData = [
+        { val: correct, lbl: "CORRECT", color: "#34d399" },
+        { val: wrong, lbl: "WRONG", color: "#ef4444" },
+        { val: `${maxStreak}\u{1F525}`, lbl: "BEST STREAK", color: "#f59e0b" },
+      ];
+      const colW = 220;
+      const startX = W/2 - colW;
+      statsData.forEach((s, si) => {
+        const x = startX + si * colW;
+        ctx.font = "700 44px 'Bebas Neue'";
+        ctx.fillStyle = s.color;
+        ctx.fillText(String(s.val), x, statsBaselineY);
+        ctx.font = "600 20px 'Barlow Condensed', sans-serif";
+        ctx.fillStyle = "#64748b";
+        ctx.letterSpacing = "2px";
+        ctx.fillText(s.lbl, x, statsBaselineY + 34);
+        ctx.letterSpacing = "0px";
+        if (si > 0) {
+          ctx.strokeStyle = "#1e3a5f";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x - colW/2, statsBaselineY - 40);
+          ctx.lineTo(x - colW/2, statsBaselineY + 16);
+          ctx.stroke();
+        }
+      });
+    } else if (step.type === "pill") {
+      const pillW = 340, pillH = 76, pillX = W/2 - pillW/2, pillY = cursorY;
+      const pillGrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
+      pillGrad.addColorStop(0, "#b5d99c");
+      pillGrad.addColorStop(1, "#ffff82");
+      ctx.fillStyle = pillGrad;
+      const r = pillH / 2;
       ctx.beginPath();
-      ctx.moveTo(x - colW/2, statsY - 40);
-      ctx.lineTo(x - colW/2, statsY + 16);
-      ctx.stroke();
+      ctx.moveTo(pillX + r, pillY);
+      ctx.arcTo(pillX + pillW, pillY, pillX + pillW, pillY + pillH, r);
+      ctx.arcTo(pillX + pillW, pillY + pillH, pillX, pillY + pillH, r);
+      ctx.arcTo(pillX, pillY + pillH, pillX, pillY, r);
+      ctx.arcTo(pillX, pillY, pillX + pillW, pillY, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.font = "700 36px 'Bebas Neue'";
+      ctx.fillStyle = "#0f172a";
+      ctx.fillText("cricketiq.club", W/2, pillY + pillH/2 + 13);
     }
+
+    if (step.letterSpacing) ctx.letterSpacing = "0px";
+    cursorY += ascent + descent + step.gap;
   });
-
-  // CTA text
-  ctx.font = "400 30px 'Barlow Condensed', sans-serif";
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText("Think you know cricket better?", W/2, 960);
-
-  // URL pill
-  const pillW = 340, pillH = 76, pillX = W/2 - pillW/2, pillY = 1010;
-  const pillGrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
-  pillGrad.addColorStop(0, "#b5d99c");
-  pillGrad.addColorStop(1, "#ffff82");
-  ctx.fillStyle = pillGrad;
-  const r = pillH / 2;
-  ctx.beginPath();
-  ctx.moveTo(pillX + r, pillY);
-  ctx.arcTo(pillX + pillW, pillY, pillX + pillW, pillY + pillH, r);
-  ctx.arcTo(pillX + pillW, pillY + pillH, pillX, pillY + pillH, r);
-  ctx.arcTo(pillX, pillY + pillH, pillX, pillY, r);
-  ctx.arcTo(pillX, pillY, pillX + pillW, pillY, r);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.font = "700 36px 'Bebas Neue'";
-  ctx.fillStyle = "#0f172a";
-  ctx.fillText("cricketiq.club", W/2, pillY + pillH/2 + 13);
 
   return new Promise(resolve => canvas.toBlob(resolve, "image/png", 0.95));
 }
@@ -1285,6 +1300,7 @@ button:disabled{cursor:not-allowed}
   background:linear-gradient(135deg,#0f172a,#131c35);
   text-align:left;transition:transform 0.15s,border-color 0.2s,background 0.2s;
   animation:fadeSlideUp 0.35s ease both;
+  opacity:1;
   color:#e2e8f0;width:100%;
 }
 @media (hover: hover) {
