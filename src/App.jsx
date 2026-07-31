@@ -332,9 +332,9 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
         }
 
         <div className="hs-footer-links">
-          <a href="/about.html">About</a>
+          <a href="/about.html" target="_blank" rel="noopener noreferrer">About</a>
           <span>·</span>
-          <a href="/privacy.html">Privacy</a>
+          <a href="/privacy.html" target="_blank" rel="noopener noreferrer">Privacy</a>
         </div>
       </div>
     </div>
