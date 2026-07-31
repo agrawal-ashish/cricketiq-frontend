@@ -330,6 +330,12 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
             <AdStrip slot={AD_SLOT_HOME} />
           </div>
         }
+
+        <div className="hs-footer-links">
+          <a href="/about.html">About</a>
+          <span>·</span>
+          <a href="/privacy.html">Privacy</a>
+        </div>
       </div>
     </div>
   );
@@ -997,6 +1003,8 @@ button:disabled{cursor:not-allowed}
 .hs-google-btn{width:100%}
 .hs-signin-error{font-size:11px;color:#ef4444;text-align:center;max-width:280px;margin:0}
 .hs-ad-strip{width:100%;margin-top:8px}
+.hs-footer-links{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:4px;font-size:11px;color:#475569}
+.hs-footer-links a{color:#64748b;text-decoration:underline}
 .rs-ad-strip{width:100%;margin-top:8px}
 @keyframes shineSlide{0%{left:-100%}50%,100%{left:150%}}
 
