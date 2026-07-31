@@ -343,7 +343,7 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkCorrect, showSignInGate, onSignInResolved }) {
+function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkCorrect, showSignInGate, onSignInResolved, user }) {
   // Tracks whether the sign-in gate has already been shown+dismissed within
   // THIS game-over transition (separate from the App-level "ever seen" flag,
   // which persists across sessions).
@@ -405,6 +405,7 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   const [wrong,    setWrong]    = useState(0);
   const [score,    setScore]    = useState(0);
   const [streak,   setStreak]   = useState(0);
+  const maxStreakRef = useRef(0); // highest streak reached this game — used on the share card
   const [answered, setAnswered] = useState(0);
   const [lifelines, setLL]      = useState({ ff: true, skip: true });
   const [elim,     setElim]     = useState([]);
@@ -478,7 +479,9 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
     if (correct) {
       const bonus = streak >= 4 ? 10 : streak >= 2 ? 5 : 0;
       const pts   = 10 + bonus;
-      setScore(s => s + pts); setStreak(s => s + 1);
+      const newStreak = streak + 1;
+      setScore(s => s + pts); setStreak(newStreak);
+      if (newStreak > maxStreakRef.current) maxStreakRef.current = newStreak;
       setPopVal(pts); setShowPop(true); setPT(t => t + 1);
       correctSeen.current.add(q.id);  // add BEFORE goNext so pickNext excludes it
       onMarkCorrect(q.id);
@@ -512,12 +515,12 @@ function QuizScreen({ questions, onEnd, answeredCorrectly, recentlySeen, onMarkC
   if (phase === "gameover") {
     if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
     if (!readyForResults) return null; // brief moment while adBreak resolves (instant if ads aren't active yet)
-    return <ResultScreen score={score} correct={answered - wrong} total={answered} wrong={wrong} reason="gameover" onEnd={() => finishGame(score, answered - wrong)} />;
+    return <ResultScreen score={score} correct={answered - wrong} total={answered} wrong={wrong} maxStreak={maxStreakRef.current} user={user} reason="gameover" onEnd={() => finishGame(score, answered - wrong)} />;
   }
   if (phase === "complete") {
     if (shouldShowGate) return <SignInGate onContinue={dismissGate} />;
     if (!readyForResults) return null;
-    return <ResultScreen score={score} correct={answered} total={answered} wrong={wrong} reason="complete" onEnd={() => finishGame(score, answered)} />;
+    return <ResultScreen score={score} correct={answered} total={answered} wrong={wrong} maxStreak={maxStreakRef.current} user={user} reason="complete" onEnd={() => finishGame(score, answered)} />;
   }
 
   const livesLeft = MAX_WRONG - wrong;
@@ -701,7 +704,152 @@ function SignInGate({ onContinue }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // RESULT SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
-function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
+// ── SHARE CARD GENERATION ────────────────────────────────────────────────────
+// Renders the result as a downloadable/shareable image via the Canvas API
+// directly, rather than a DOM-to-image library. Deliberate choice: this
+// design uses gradient text and custom web fonts, both of which DOM-to-canvas
+// libraries (html2canvas etc.) are known to render inconsistently across
+// browsers. Drawing directly gives full, predictable control instead.
+function waitForFonts() {
+  if (typeof document === "undefined" || !document.fonts) return Promise.resolve();
+  return Promise.all([
+    document.fonts.load("700 100px 'Bebas Neue'"),
+    document.fonts.load("700 40px 'Barlow Condensed'"),
+  ]).then(() => document.fonts.ready).catch(() => {});
+}
+
+async function generateShareCardBlob({ score, rank, correct, wrong, maxStreak, userName }) {
+  await waitForFonts();
+
+  const W = 1080, H = 1600;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  // Background
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#040810");
+  bg.addColorStop(1, "#0a1420");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Ambient glows
+  const glow1 = ctx.createRadialGradient(W/2, 340, 20, W/2, 340, 360);
+  glow1.addColorStop(0, "rgba(181,217,156,0.20)");
+  glow1.addColorStop(1, "rgba(181,217,156,0)");
+  ctx.fillStyle = glow1;
+  ctx.fillRect(0, 0, W, H);
+
+  const glow2 = ctx.createRadialGradient(W/2, H - 260, 20, W/2, H - 260, 320);
+  glow2.addColorStop(0, "rgba(245,158,11,0.12)");
+  glow2.addColorStop(1, "rgba(245,158,11,0)");
+  ctx.fillStyle = glow2;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = "center";
+
+  // Wordmark
+  ctx.font = "700 58px 'Bebas Neue'";
+  const wmGrad = ctx.createLinearGradient(W/2 - 160, 0, W/2 + 160, 0);
+  wmGrad.addColorStop(0, "#b5d99c");
+  wmGrad.addColorStop(1, "#ffff82");
+  ctx.fillStyle = wmGrad;
+  ctx.fillText("CRICKETIQ", W/2, 130);
+
+  // Rank icon (emoji)
+  ctx.font = "128px sans-serif";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(rank.icon, W/2, 320);
+
+  // Rank title + subtitle
+  ctx.font = "700 52px 'Bebas Neue'";
+  ctx.fillStyle = rank.color;
+  ctx.fillText(rank.title, W/2, 420);
+
+  ctx.font = "400 30px 'Barlow Condensed', sans-serif";
+  ctx.fillStyle = "#94a3b8";
+  ctx.fillText(rank.sub.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim(), W/2, 464);
+
+  let scoreY = 620;
+  if (userName) {
+    ctx.font = "600 30px 'Barlow Condensed', sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.letterSpacing = "3px";
+    ctx.fillText(`${userName.toUpperCase()} SCORED`, W/2, 560);
+    ctx.letterSpacing = "0px";
+  }
+
+  // Big score
+  ctx.font = "700 220px 'Bebas Neue'";
+  ctx.fillStyle = rank.color;
+  ctx.fillText(String(score), W/2, scoreY);
+
+  if (!userName) {
+    ctx.font = "700 34px 'Bebas Neue'";
+    ctx.fillStyle = "#475569";
+    ctx.letterSpacing = "6px";
+    ctx.fillText("POINTS", W/2, scoreY + 56);
+    ctx.letterSpacing = "0px";
+  }
+
+  // Stats row
+  const statsY = 800;
+  const stats = [
+    { val: correct, lbl: "CORRECT", color: "#34d399" },
+    { val: wrong, lbl: "WRONG", color: "#ef4444" },
+    { val: `${maxStreak}\u{1F525}`, lbl: "BEST STREAK", color: "#f59e0b" },
+  ];
+  const colW = 220;
+  const startX = W/2 - colW;
+  stats.forEach((s, i) => {
+    const x = startX + i * colW;
+    ctx.font = "700 44px 'Bebas Neue'";
+    ctx.fillStyle = s.color;
+    ctx.fillText(String(s.val), x, statsY);
+    ctx.font = "600 20px 'Barlow Condensed', sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.letterSpacing = "2px";
+    ctx.fillText(s.lbl, x, statsY + 34);
+    ctx.letterSpacing = "0px";
+    if (i > 0) {
+      ctx.strokeStyle = "#1e3a5f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - colW/2, statsY - 40);
+      ctx.lineTo(x - colW/2, statsY + 16);
+      ctx.stroke();
+    }
+  });
+
+  // CTA text
+  ctx.font = "400 30px 'Barlow Condensed', sans-serif";
+  ctx.fillStyle = "#94a3b8";
+  ctx.fillText("Think you know cricket better?", W/2, 960);
+
+  // URL pill
+  const pillW = 340, pillH = 76, pillX = W/2 - pillW/2, pillY = 1010;
+  const pillGrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
+  pillGrad.addColorStop(0, "#b5d99c");
+  pillGrad.addColorStop(1, "#ffff82");
+  ctx.fillStyle = pillGrad;
+  const r = pillH / 2;
+  ctx.beginPath();
+  ctx.moveTo(pillX + r, pillY);
+  ctx.arcTo(pillX + pillW, pillY, pillX + pillW, pillY + pillH, r);
+  ctx.arcTo(pillX + pillW, pillY + pillH, pillX, pillY + pillH, r);
+  ctx.arcTo(pillX, pillY + pillH, pillX, pillY, r);
+  ctx.arcTo(pillX, pillY, pillX + pillW, pillY, r);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.font = "700 36px 'Bebas Neue'";
+  ctx.fillStyle = "#0f172a";
+  ctx.fillText("cricketiq.club", W/2, pillY + pillH/2 + 13);
+
+  return new Promise(resolve => canvas.toBlob(resolve, "image/png", 0.95));
+}
+
+function ResultScreen({ score, correct, total, wrong, maxStreak, user, reason, onEnd }) {
   const [show, setShow] = useState(false);
   useEffect(() => { setTimeout(() => setShow(true), 100); }, []);
   const pct  = Math.round((correct / total) * 100);
@@ -720,6 +868,48 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
     { lbl:"WRONG",    val: wrong,   tot: total, color:"#ef4444" },
     { lbl:"ACCURACY", val: pct,     tot: 100,   color:"#f59e0b", pct: true },
   ];
+
+  const [shareStatus, setShareStatus] = useState("idle"); // idle | working | error
+  const handleShare = async () => {
+    setShareStatus("working");
+    try {
+      const blob = await generateShareCardBlob({
+        score, rank, correct, wrong,
+        maxStreak: maxStreak || 0,
+        userName: user?.displayName || null,
+      });
+      if (!blob) throw new Error("Image generation failed");
+
+      const shareText = "I just scored " + score + " on CricketIQ \uD83C\uDFCF Think you know cricket better? Beat my score:";
+      const shareUrl = "https://cricketiq.club";
+      const file = new File([blob], "cricketiq-score.png", { type: "image/png" });
+
+      // Native share sheet, with the image + a genuinely clickable link
+      // alongside it — WhatsApp, Instagram, etc. all support file+url together.
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], text: shareText, url: shareUrl });
+      } else {
+        // Fallback (mainly desktop browsers without a share sheet): download
+        // the image directly, and copy shareable text+link to the clipboard
+        // so the link is still easy to paste in wherever they share it.
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "cricketiq-score.png";
+        link.click();
+        URL.revokeObjectURL(link.href);
+        if (navigator.clipboard) {
+          try { await navigator.clipboard.writeText(`${shareText} ${shareUrl}`); } catch {}
+        }
+      }
+      setShareStatus("idle");
+    } catch (err) {
+      // AbortError fires when the user just closes the native share sheet —
+      // not a real error, don't show a message for that.
+      if (err && err.name === "AbortError") { setShareStatus("idle"); return; }
+      console.error("Share failed:", err);
+      setShareStatus("error");
+    }
+  };
 
   return (
     <div className="rs-root">
@@ -768,6 +958,13 @@ function ResultScreen({ score, correct, total, wrong, reason, onEnd }) {
             </div>
           ))}
         </div>
+
+        <RippleBtn className="rs-share-cta" onClick={handleShare} disabled={shareStatus === "working"}>
+          {shareStatus === "working" ? "Preparing…" : "\uD83D\uDCE4 SHARE MY SCORE"}
+        </RippleBtn>
+        {shareStatus === "error" &&
+          <p className="rs-share-error">Couldn't share right now — try again in a moment.</p>
+        }
 
         <RippleBtn className="rs-cta" onClick={onEnd}>
           🏠 BACK TO HOME
@@ -1140,6 +1337,19 @@ button:disabled{cursor:not-allowed}
 .rs-bar-track{background:#1e293b;border-radius:6px;height:8px;overflow:hidden}
 .rs-bar-fill{height:100%;border-radius:6px;transition:width 1s cubic-bezier(.34,1.2,.64,1)}
 
+.rs-share-cta{
+  width:100%;padding:18px;border-radius:16px;margin-top:4px;
+  background:linear-gradient(135deg,#b5d99c,#ffff82);
+  border:none;
+  font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px;color:#0f172a;
+  transition:all 0.2s;box-shadow:0 4px 16px rgba(181,217,156,0.15);
+}
+.rs-share-cta:disabled{opacity:0.7}
+@media (hover: hover) {
+  .rs-share-cta:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(181,217,156,0.25)}
+}
+.rs-share-error{font-size:12px;color:#ef4444;text-align:center;margin:0}
+
 .rs-cta{
   width:100%;padding:18px;border-radius:16px;
   background:linear-gradient(135deg,#1e293b,#273549);
@@ -1241,6 +1451,7 @@ button:disabled{cursor:not-allowed}
           onMarkCorrect={id => setAnswered(prev => new Set([...prev, id]))}
           showSignInGate={showSignInGate}
           onSignInResolved={markSignInPromptSeen}
+          user={user}
         />
       )}
     </>
