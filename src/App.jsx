@@ -299,17 +299,18 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
         </div>
 
         {/* CTA */}
-        <RippleBtn className="hs-cta" onClick={onStart}>
-          <span className="hs-cta-inner">
-            <span>PLAY NOW</span>
-            <span className="hs-cta-arrow">▶</span>
-          </span>
-          <div className="hs-cta-shine" />
-        </RippleBtn>
-
-        {!user && showSignInLink &&
+        {(user || !showSignInLink) ? (
+          <RippleBtn className="hs-cta" onClick={onStart}>
+            <span className="hs-cta-inner">
+              <span>PLAY NOW</span>
+              <span className="hs-cta-arrow">▶</span>
+            </span>
+            <div className="hs-cta-shine" />
+          </RippleBtn>
+        ) : (
           <div className="hs-signin-row">
-            <RippleBtn className="sg-google-btn hs-google-btn" onClick={handleSignIn} disabled={signInStatus === "working"}>
+            <p className="hs-signin-prompt">Sign in with Google to keep playing</p>
+            <RippleBtn className="sg-google-btn hs-google-btn hs-google-btn-primary" onClick={handleSignIn} disabled={signInStatus === "working"}>
               <svg width="18" height="18" viewBox="0 0 18 18" style={{ flexShrink:0 }}>
                 <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/>
                 <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 0 0 9 18z"/>
@@ -322,7 +323,7 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
               <p className="hs-signin-error">Couldn't sign in — check that popups aren't blocked, then try again.</p>
             }
           </div>
-        }
+        )}
 
         {ADSENSE_ENABLED &&
           <div className="hs-ad-strip">
@@ -1222,8 +1223,10 @@ button:disabled{cursor:not-allowed}
 .hs-cta-inner{display:flex;align-items:center;justify-content:center;gap:12px;padding:18px 32px;font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:3px;color:#0f172a}
 .hs-cta-arrow{font-size:18px;animation:none;transition:transform 0.2s}
 .hs-cta-shine{position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.2),transparent);animation:shineSlide 3s infinite;pointer-events:none}
-.hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;margin-top:2px}
+.hs-signin-row{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;margin-top:2px}
+.hs-signin-prompt{font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;text-align:center;margin:0}
 .hs-google-btn{width:100%}
+.hs-google-btn-primary{padding:18px;font-size:17px}
 .hs-signin-error{font-size:11px;color:#ef4444;text-align:center;max-width:280px;margin:0}
 .hs-ad-strip{width:100%;margin-top:8px}
 .hs-footer-links{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:4px;font-size:11px;color:#475569}
