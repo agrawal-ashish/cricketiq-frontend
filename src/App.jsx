@@ -12,6 +12,7 @@ const API_BASE_URL = "https://api.cricketiq.club";
 // security relies on Security Rules, not on hiding this config.
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, runTransaction, serverTimestamp, deleteField } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC2yyapAkZmri4JXHiLU2kFWsMYB8dUHoM",
@@ -25,6 +26,84 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
+const db = getFirestore(firebaseApp);
+
+// ── MULTIPLAYER ROOMS ────────────────────────────────────────────────────────
+// Room state lives in Firestore, one document per room at rooms/{code}.
+// MAX_ROOM_PLAYERS includes the host — a 5-player room is the host + 4 joiners.
+const MAX_ROOM_PLAYERS = 5;
+const ROOM_QUESTION_COUNT = 25;
+
+function generateRoomCode() {
+  return String(Math.floor(100000 + Math.random() * 900000)); // 6 digits, always
+}
+
+function getOrCreateLocalPlayerId() {
+  // A stable per-device identity for room participation, independent of
+  // Google sign-in — lets anonymous players join rooms without a sign-in
+  // gate, while still being distinguishable from other players in the room.
+  try {
+    let id = localStorage.getItem("cricketiq_player_id");
+    if (!id) {
+      id = "p_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem("cricketiq_player_id", id);
+    }
+    return id;
+  } catch {
+    return "p_" + Math.random().toString(36).slice(2, 10); // private browsing fallback, non-persistent
+  }
+}
+
+// Creates a new room, retrying on the astronomically rare chance of a code
+// collision. Returns the created room's code.
+async function createRoom({ playerId, playerName }) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateRoomCode();
+    const roomRef = doc(db, "rooms", code);
+    const existing = await getDoc(roomRef);
+    if (existing.exists()) continue; // extremely unlikely, but retry with a new code
+    await setDoc(roomRef, {
+      code,
+      hostId: playerId,
+      status: "waiting",
+      createdAt: serverTimestamp(),
+      questionIds: [],
+      currentQuestionIndex: 0,
+      players: {
+        [playerId]: { name: playerName, isHost: true, score: 0, joinedAt: Date.now() },
+      },
+    });
+    return code;
+  }
+  throw new Error("Couldn't create a room right now — try again.");
+}
+
+// Joins an existing room by code. Uses a transaction so two people racing to
+// take the last open slot can't both succeed and overfill the room.
+async function joinRoom({ code, playerId, playerName }) {
+  const roomRef = doc(db, "rooms", code);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(roomRef);
+    if (!snap.exists()) throw new Error("That room code doesn't exist. Check it and try again.");
+    const room = snap.data();
+    if (room.status !== "waiting") throw new Error("That room's match has already started.");
+    const players = room.players || {};
+    if (players[playerId]) return room; // already in this room (e.g., reconnecting) — fine
+    if (Object.keys(players).length >= MAX_ROOM_PLAYERS) {
+      throw new Error("That room is full (5 players max).");
+    }
+    tx.update(roomRef, {
+      [`players.${playerId}`]: { name: playerName, isHost: false, score: 0, joinedAt: Date.now() },
+    });
+    return { ...room, players: { ...players, [playerId]: { name: playerName, isHost: false, score: 0 } } };
+  });
+}
+
+function leaveRoom({ code, playerId }) {
+  const roomRef = doc(db, "rooms", code);
+  return updateDoc(roomRef, { [`players.${playerId}`]: deleteField() }).catch(() => {});
+  // Failure here (e.g., room already deleted) is fine to ignore — leaving is best-effort.
+}
 
 // ── ADSENSE CONFIG ───────────────────────────────────────────────────────────
 // Replace with your real publisher ID once AdSense approves your site
@@ -188,6 +267,199 @@ function ScorePop({ value, visible }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAY MODE MODAL — shown the instant "Play now" is tapped
+// ═══════════════════════════════════════════════════════════════════════════════
+function PlayModeModal({ onPlayOffline, onPlayRoom, onClose }) {
+  return (
+    <div className="pm-overlay" onClick={onClose}>
+      <div className="pm-modal" onClick={e => e.stopPropagation()}>
+        <div className="pm-title">CHOOSE YOUR MATCH</div>
+        <RippleBtn className="pm-card pm-card-offline" onClick={onPlayOffline}>
+          <span className="pm-card-icon">🏏</span>
+          <span className="pm-card-text">
+            <span className="pm-card-heading pm-heading-offline">PLAY OFFLINE</span>
+            <span className="pm-card-sub">Quick solo round, right now</span>
+          </span>
+        </RippleBtn>
+        <RippleBtn className="pm-card pm-card-room" onClick={onPlayRoom}>
+          <span className="pm-card-icon">👥</span>
+          <span className="pm-card-text">
+            <span className="pm-card-heading pm-heading-room">CREATE OR JOIN ROOM</span>
+            <span className="pm-card-sub">Compete live with up to 5 friends</span>
+          </span>
+        </RippleBtn>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOM SCREEN — create/join, then the live lobby while players gather
+// ═══════════════════════════════════════════════════════════════════════════════
+function RoomScreen({ user, onExit, onGameStart }) {
+  const [phase, setPhase] = useState("create-join"); // create-join | lobby
+  const [tab, setTab] = useState("create"); // create | join
+  const [joinCode, setJoinCode] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [room, setRoom] = useState(null); // live room doc, once created/joined
+  const [roomCode, setRoomCode] = useState(null);
+
+  const playerId = useRef(getOrCreateLocalPlayerId()).current;
+  const playerName = user?.displayName || nameInput.trim();
+
+  // Live room updates once we're in a room — this is the same listener
+  // pattern the synchronized-question stage will build directly on top of.
+  useEffect(() => {
+    if (!roomCode) return;
+    const roomRef = doc(db, "rooms", roomCode);
+    const unsub = onSnapshot(roomRef, (snap) => {
+      if (!snap.exists()) { setError("This room no longer exists."); setPhase("create-join"); setRoomCode(null); return; }
+      setRoom(snap.data());
+    });
+    return unsub;
+  }, [roomCode]);
+
+  const needsName = !user && !nameInput.trim();
+
+  const handleCreate = async () => {
+    if (needsName) { setError("Enter a name first."); return; }
+    setBusy(true); setError(null);
+    try {
+      const code = await createRoom({ playerId, playerName });
+      setRoomCode(code);
+      setPhase("lobby");
+    } catch (err) {
+      setError(err.message || "Couldn't create a room right now.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleJoin = async () => {
+    if (needsName) { setError("Enter a name first."); return; }
+    if (joinCode.trim().length !== 6) { setError("Room codes are 6 digits."); return; }
+    setBusy(true); setError(null);
+    try {
+      await joinRoom({ code: joinCode.trim(), playerId, playerName });
+      setRoomCode(joinCode.trim());
+      setPhase("lobby");
+    } catch (err) {
+      setError(err.message || "Couldn't join that room.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleLeave = () => {
+    if (roomCode) leaveRoom({ code: roomCode, playerId });
+    setRoom(null); setRoomCode(null); setPhase("create-join"); setError(null);
+  };
+
+  const handleCopyCode = async () => {
+    if (!navigator.clipboard || !roomCode) return;
+    try { await navigator.clipboard.writeText(roomCode); } catch {}
+  };
+
+  const handleShareWhatsApp = () => {
+    if (!roomCode) return;
+    const text = encodeURIComponent(`Join my CricketIQ room! Code: ${roomCode} — play at https://cricketiq.club`);
+    window.open(`https://wa.me/?text=${text}`, "_blank");
+  };
+
+  if (phase === "lobby" && room) {
+    const players = Object.entries(room.players || {}).sort((a, b) => (a[1].joinedAt||0) - (b[1].joinedAt||0));
+    const isHost = room.hostId === playerId;
+    const emptySlots = Math.max(0, MAX_ROOM_PLAYERS - players.length);
+
+    return (
+      <div className="room-root">
+        <button className="room-back" onClick={handleLeave}>← Leave room</button>
+        <div className="room-code-label">ROOM CODE</div>
+        <div className="room-code">{roomCode.slice(0,3)} {roomCode.slice(3)}</div>
+
+        <div className="room-share-row">
+          <RippleBtn className="room-share-btn" onClick={handleCopyCode}>COPY CODE</RippleBtn>
+          <RippleBtn className="room-share-btn room-share-whatsapp" onClick={handleShareWhatsApp}>SHARE ON WHATSAPP</RippleBtn>
+        </div>
+
+        <div className="room-players-label">PLAYERS · {players.length} OF {MAX_ROOM_PLAYERS}</div>
+        <div className="room-players-list">
+          {players.map(([id, p]) => (
+            <div key={id} className="room-player-row">
+              <div className="room-player-avatar">{(p.name || "?")[0].toUpperCase()}</div>
+              <div className="room-player-name">{p.name}</div>
+              {p.isHost && <div className="room-player-host">HOST</div>}
+            </div>
+          ))}
+          {[...Array(emptySlots)].map((_, i) => (
+            <div key={`empty-${i}`} className="room-player-row room-player-empty">Waiting for players…</div>
+          ))}
+        </div>
+
+        {isHost ? (
+          <RippleBtn className="room-start-btn" onClick={() => onGameStart?.(roomCode)} disabled={players.length < 2}>
+            {players.length < 2 ? "NEED AT LEAST 2 PLAYERS" : "START GAME"}
+          </RippleBtn>
+        ) : (
+          <div className="room-waiting-host">Waiting for host to start…</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="room-root">
+      <button className="room-back" onClick={onExit}>← Back</button>
+      <div className="room-title">MULTIPLAYER ROOM</div>
+      <div className="room-subtitle">Up to {MAX_ROOM_PLAYERS} players per room</div>
+
+      <div className="room-tabs">
+        <button className={`room-tab ${tab === "create" ? "room-tab-active" : ""}`} onClick={() => { setTab("create"); setError(null); }}>CREATE</button>
+        <button className={`room-tab ${tab === "join" ? "room-tab-active" : ""}`} onClick={() => { setTab("join"); setError(null); }}>JOIN</button>
+      </div>
+
+      {!user &&
+        <input
+          className="room-name-input"
+          placeholder="Enter your name"
+          value={nameInput}
+          onChange={e => setNameInput(e.target.value)}
+          maxLength={20}
+        />
+      }
+
+      {tab === "create" ? (
+        <>
+          <p className="room-desc">Tap create, get a 6-digit code, then send it to friends. Anyone with the code can join — you start the match once everyone's in.</p>
+          <RippleBtn className="room-primary-btn" onClick={handleCreate} disabled={busy}>
+            {busy ? "Creating…" : "CREATE ROOM"}
+          </RippleBtn>
+        </>
+      ) : (
+        <>
+          <p className="room-desc">Enter the 6-digit code your friend shared with you.</p>
+          <input
+            className="room-code-input"
+            placeholder="000000"
+            value={joinCode}
+            onChange={e => setJoinCode(e.target.value.replace(/\D/g, "").slice(0,6))}
+            inputMode="numeric"
+            maxLength={6}
+          />
+          <RippleBtn className="room-primary-btn" onClick={handleJoin} disabled={busy}>
+            {busy ? "Joining…" : "JOIN ROOM"}
+          </RippleBtn>
+        </>
+      )}
+
+      {error && <p className="room-error">{error}</p>}
+    </div>
+  );
+}
+
 function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignInLink }) {
   const [entered, setEntered] = useState(false);
   useEffect(() => { setTimeout(() => setEntered(true), 80); }, []);
@@ -1037,6 +1309,7 @@ function saveFlag(key, value) {
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [screen, setScreen]     = useState("home");
+  const [showPlayModeModal, setShowPlayModeModal] = useState(false);
   const [answered, setAnswered] = useState(() => loadIdSet(LS_CORRECT_KEY)); // correctly answered — excluded forever
   const [recentlySeen, setRecentlySeen] = useState(() => loadIdSet(LS_RECENT_KEY)); // all shown last game — excluded next game
   const [stats, setStats]       = useState({ gamesPlayed:0, bestScore:0, totalCorrect:0 });
@@ -1406,6 +1679,62 @@ button:disabled{cursor:not-allowed}
 .sg-google-btn:disabled{opacity:0.7}
 .sg-error{font-size:12px;color:#ef4444;max-width:300px;margin:0}
 .sg-skip{margin-top:4px;font-size:13px;color:#64748b;text-decoration:underline;background:none;padding:8px}
+
+/* ── PLAY MODE MODAL ──────────────────── */
+.pm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.pm-modal{width:100%;max-width:360px;background:linear-gradient(180deg,#0a1420,#0f172a);border-radius:24px;border:1px solid #1e3a5f;padding:26px 22px;animation:scaleIn 0.25s ease both}
+.pm-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#e2e8f0;text-align:center;margin-bottom:20px}
+.pm-card{width:100%;display:flex;align-items:center;gap:14px;border-radius:16px;padding:18px;margin-bottom:12px;text-align:left;transition:transform 0.15s}
+.pm-card:last-child{margin-bottom:0}
+.pm-card-offline{background:linear-gradient(135deg,#0f172a,#1a2744);border:1.5px solid #1e3a5f}
+.pm-card-room{background:linear-gradient(135deg,#1a1030,#241640);border:1.5px solid #4c2f7a}
+.pm-card-icon{font-size:28px;flex-shrink:0}
+.pm-card-text{display:flex;flex-direction:column;gap:2px}
+.pm-card-heading{font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px}
+.pm-heading-offline{color:#b5d99c}
+.pm-heading-room{color:#c4b5fd}
+.pm-card-sub{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#94a3b8}
+
+/* ── ROOM SCREEN ──────────────────────── */
+.room-root{
+  min-height:100vh;min-height:100dvh;width:100%;max-width:520px;margin:0 auto;
+  padding:calc(20px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) calc(28px + env(safe-area-inset-bottom, 0px)) calc(20px + env(safe-area-inset-left, 0px));
+  display:flex;flex-direction:column;position:relative;
+  transform:translateZ(0);-webkit-transform:translateZ(0);
+}
+.room-back{align-self:flex-start;font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;background:none;padding:6px 0;margin-bottom:16px}
+.room-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;color:#e2e8f0;margin-bottom:4px}
+.room-subtitle{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#64748b;margin-bottom:22px}
+.room-tabs{display:flex;background:#0f172a;border-radius:12px;padding:4px;margin-bottom:20px}
+.room-tab{flex:1;text-align:center;padding:10px;border-radius:9px;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;color:#64748b;background:none}
+.room-tab-active{background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a}
+.room-name-input,.room-code-input{
+  width:100%;background:#0f172a;border:1.5px solid #1e3a5f;border-radius:12px;
+  padding:14px 16px;font-family:'Barlow Condensed',sans-serif;font-size:16px;color:#e2e8f0;
+  margin-bottom:16px;box-sizing:border-box;
+}
+.room-code-input{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:8px;text-align:center}
+.room-name-input::placeholder,.room-code-input::placeholder{color:#475569;letter-spacing:normal}
+.room-desc{font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;line-height:1.5;margin:0 0 20px}
+.room-primary-btn{width:100%;background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a;font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:2px;padding:16px;border-radius:14px}
+.room-primary-btn:disabled{opacity:0.7}
+.room-error{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#ef4444;text-align:center;margin-top:14px}
+
+.room-code-label{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;color:#64748b;text-align:center;margin-bottom:8px}
+.room-code{font-family:'Bebas Neue',sans-serif;font-size:40px;letter-spacing:9px;color:#b5d99c;text-align:center;margin-bottom:18px}
+.room-share-row{display:flex;gap:10px;margin-bottom:26px}
+.room-share-btn{flex:1;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:12px;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;color:#e2e8f0}
+.room-share-whatsapp{background:#25D366;border-color:#25D366;color:#052e14}
+.room-players-label{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:1px;color:#64748b;margin-bottom:10px}
+.room-players-list{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;flex:1}
+.room-player-row{display:flex;align-items:center;gap:10px;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:10px 14px}
+.room-player-avatar{width:28px;height:28px;border-radius:50%;background:#b5d99c;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;color:#0f172a;flex-shrink:0}
+.room-player-name{font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#e2e8f0;flex:1}
+.room-player-host{font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:1px;color:#f59e0b}
+.room-player-empty{border-style:dashed;color:#475569;font-family:'Barlow Condensed',sans-serif;font-size:13px;justify-content:center}
+.room-start-btn{width:100%;background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a;font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:2px;padding:16px;border-radius:14px}
+.room-start-btn:disabled{opacity:0.5}
+.room-waiting-host{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;padding:16px}
       `}</style>
 
       {questions === null && !loadError && (
@@ -1448,7 +1777,7 @@ button:disabled{cursor:not-allowed}
 
       {questions !== null && screen === "home" && (
         <HomeScreen
-          onStart={() => setScreen("quiz")}
+          onStart={() => setShowPlayModeModal(true)}
           stats={stats}
           totalQuestions={questions.length}
           user={user}
@@ -1456,6 +1785,27 @@ button:disabled{cursor:not-allowed}
           showSignInLink={hasSeenSignInPrompt}
         />
       )}
+
+      {showPlayModeModal && (
+        <PlayModeModal
+          onClose={() => setShowPlayModeModal(false)}
+          onPlayOffline={() => { setShowPlayModeModal(false); setScreen("quiz"); }}
+          onPlayRoom={() => { setShowPlayModeModal(false); setScreen("room"); }}
+        />
+      )}
+
+      {screen === "room" && (
+        <RoomScreen
+          user={user}
+          onExit={() => setScreen("home")}
+          onGameStart={(roomCode) => {
+            // Synchronized in-room gameplay is the next build stage — for now
+            // this just confirms the handoff point is wired correctly.
+            console.log("Room game starting:", roomCode);
+          }}
+        />
+      )}
+
       {questions !== null && screen === "quiz" && (
         <QuizScreen
           key={stats.gamesPlayed}
