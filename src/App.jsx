@@ -315,10 +315,21 @@ function RoomScreen({ user, onExit, onGameStart }) {
   useEffect(() => {
     if (!roomCode) return;
     const roomRef = doc(db, "rooms", roomCode);
-    const unsub = onSnapshot(roomRef, (snap) => {
-      if (!snap.exists()) { setError("This room no longer exists."); setPhase("create-join"); setRoomCode(null); return; }
-      setRoom(snap.data());
-    });
+    const unsub = onSnapshot(
+      roomRef,
+      (snap) => {
+        if (!snap.exists()) { setError("This room no longer exists."); setPhase("create-join"); setRoomCode(null); return; }
+        console.log("Room update received:", snap.data());
+        setRoom(snap.data());
+      },
+      (err) => {
+        // Previously had no error handler at all — a failed listener (rules
+        // issue, network blip) would fail completely silently, looking
+        // exactly like "the screen just didn't update."
+        console.error("Room listener error:", err);
+        setError("Lost connection to the room. Try leaving and rejoining.");
+      }
+    );
     return unsub;
   }, [roomCode]);
 
@@ -358,16 +369,38 @@ function RoomScreen({ user, onExit, onGameStart }) {
     setRoom(null); setRoomCode(null); setPhase("create-join"); setError(null);
   };
 
+  const [copied, setCopied] = useState(false);
   const handleCopyCode = async () => {
     if (!navigator.clipboard || !roomCode) return;
-    try { await navigator.clipboard.writeText(roomCode); } catch {}
+    try {
+      await navigator.clipboard.writeText(roomCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
   };
 
-  const handleShareWhatsApp = () => {
+  const handleShareRoom = async () => {
     if (!roomCode) return;
-    const text = encodeURIComponent(`Join my CricketIQ room! Code: ${roomCode} — play at https://cricketiq.club`);
-    window.open(`https://wa.me/?text=${text}`, "_blank");
+    const text = `Join my CricketIQ room! Code: ${roomCode}`;
+    const url = "https://cricketiq.club";
+    if (navigator.share) {
+      try { await navigator.share({ text, url }); } catch {} // AbortError on cancel — fine, ignore
+    } else if (navigator.clipboard) {
+      // Desktop fallback — no share sheet available, so copy instead
+      try { await navigator.clipboard.writeText(`${text} — play at ${url}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+    }
   };
+
+  if (phase === "lobby" && !room) {
+    // Brief gap between setPhase("lobby") and the first Firestore snapshot
+    // arriving — show a loading state instead of falling through to the
+    // create/join screen, which would be a confusing flash back.
+    return (
+      <div className="room-root">
+        <div className="room-loading">Connecting to room…</div>
+      </div>
+    );
+  }
 
   if (phase === "lobby" && room) {
     const players = Object.entries(room.players || {}).sort((a, b) => (a[1].joinedAt||0) - (b[1].joinedAt||0));
@@ -381,8 +414,14 @@ function RoomScreen({ user, onExit, onGameStart }) {
         <div className="room-code">{roomCode.slice(0,3)} {roomCode.slice(3)}</div>
 
         <div className="room-share-row">
-          <RippleBtn className="room-share-btn" onClick={handleCopyCode}>COPY CODE</RippleBtn>
-          <RippleBtn className="room-share-btn room-share-whatsapp" onClick={handleShareWhatsApp}>SHARE ON WHATSAPP</RippleBtn>
+          <RippleBtn className="room-share-btn" onClick={handleCopyCode}>
+            <span className="room-share-icon">{copied ? "✓" : "📋"}</span>
+            {copied ? "COPIED" : "COPY CODE"}
+          </RippleBtn>
+          <RippleBtn className="room-share-btn room-share-primary" onClick={handleShareRoom}>
+            <span className="room-share-icon">📤</span>
+            SHARE ROOM
+          </RippleBtn>
         </div>
 
         <div className="room-players-label">PLAYERS · {players.length} OF {MAX_ROOM_PLAYERS}</div>
@@ -406,6 +445,8 @@ function RoomScreen({ user, onExit, onGameStart }) {
         ) : (
           <div className="room-waiting-host">Waiting for host to start…</div>
         )}
+
+        {error && <p className="room-error">{error}</p>}
       </div>
     );
   }
@@ -1723,8 +1764,9 @@ button:disabled{cursor:not-allowed}
 .room-code-label{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;color:#64748b;text-align:center;margin-bottom:8px}
 .room-code{font-family:'Bebas Neue',sans-serif;font-size:40px;letter-spacing:9px;color:#b5d99c;text-align:center;margin-bottom:18px}
 .room-share-row{display:flex;gap:10px;margin-bottom:26px}
-.room-share-btn{flex:1;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:12px;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;color:#e2e8f0}
-.room-share-whatsapp{background:#25D366;border-color:#25D366;color:#052e14}
+.room-share-btn{flex:1;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:12px;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;color:#e2e8f0}
+.room-share-icon{font-size:14px}
+.room-share-primary{background:linear-gradient(135deg,#b5d99c,#ffff82);border-color:transparent;color:#0f172a}
 .room-players-label{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:1px;color:#64748b;margin-bottom:10px}
 .room-players-list{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;flex:1}
 .room-player-row{display:flex;align-items:center;gap:10px;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:10px 14px}
@@ -1735,6 +1777,7 @@ button:disabled{cursor:not-allowed}
 .room-start-btn{width:100%;background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a;font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:2px;padding:16px;border-radius:14px}
 .room-start-btn:disabled{opacity:0.5}
 .room-waiting-host{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;padding:16px}
+.room-loading{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:15px;color:#94a3b8;padding:60px 20px}
       `}</style>
 
       {questions === null && !loadError && (
