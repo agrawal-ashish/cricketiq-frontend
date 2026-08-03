@@ -1728,7 +1728,7 @@ button:disabled{cursor:not-allowed}
 .pm-card{width:100%;display:flex;align-items:center;gap:14px;border-radius:16px;padding:18px;margin-bottom:12px;text-align:left;transition:transform 0.15s}
 .pm-card:last-child{margin-bottom:0}
 .pm-card-offline{background:linear-gradient(135deg,#0f172a,#1a2744);border:1.5px solid #1e3a5f}
-.pm-card-room{background:linear-gradient(135deg,#1a1030,#241640);border:1.5px solid #4c2f7a}
+.pm-card-room{background:linear-gradient(135deg,#0f172a,#1a2744);border:1.5px solid #1e3a5f}
 .pm-card-icon{font-size:28px;flex-shrink:0}
 .pm-card-text{display:flex;flex-direction:column;gap:2px}
 .pm-card-heading{font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px}
@@ -1771,7 +1771,7 @@ button:disabled{cursor:not-allowed}
 .room-players-list{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;flex:1}
 .room-player-row{display:flex;align-items:center;gap:10px;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:10px 14px}
 .room-player-avatar{width:28px;height:28px;border-radius:50%;background:#b5d99c;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;color:#0f172a;flex-shrink:0}
-.room-player-name{font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#e2e8f0;flex:1}
+.room-player-name{font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#e2e8f0;flex:1;text-align:left}
 .room-player-host{font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:1px;color:#f59e0b}
 .room-player-empty{border-style:dashed;color:#475569;font-family:'Barlow Condensed',sans-serif;font-size:13px;justify-content:center}
 .room-start-btn{width:100%;background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a;font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:2px;padding:16px;border-radius:14px}
