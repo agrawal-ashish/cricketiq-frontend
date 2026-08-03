@@ -1748,7 +1748,7 @@ button:disabled{cursor:not-allowed}
 .room-subtitle{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#64748b;margin-bottom:22px}
 .room-tabs{display:flex;background:#0f172a;border-radius:12px;padding:4px;margin-bottom:20px}
 .room-tab{flex:1;text-align:center;padding:10px;border-radius:9px;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;color:#64748b;background:none}
-.room-tab-active{background:linear-gradient(135deg,#b5d99c,#ffff82);color:#0f172a}
+.room-tab-active{background:#ffffff;color:#1f1f1f}
 .room-name-input,.room-code-input{
   width:100%;background:#0f172a;border:1.5px solid #1e3a5f;border-radius:12px;
   padding:14px 16px;font-family:'Barlow Condensed',sans-serif;font-size:16px;color:#e2e8f0;
@@ -1766,7 +1766,7 @@ button:disabled{cursor:not-allowed}
 .room-share-row{display:flex;gap:10px;margin-bottom:26px}
 .room-share-btn{flex:1;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:12px;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;color:#e2e8f0}
 .room-share-icon{font-size:14px}
-.room-share-primary{background:linear-gradient(135deg,#b5d99c,#ffff82);border-color:transparent;color:#0f172a}
+.room-share-primary{background:#ffffff;border-color:transparent;color:#1f1f1f}
 .room-players-label{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:1px;color:#64748b;margin-bottom:10px}
 .room-players-list{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;flex:1}
 .room-player-row{display:flex;align-items:center;gap:10px;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:10px 14px}
