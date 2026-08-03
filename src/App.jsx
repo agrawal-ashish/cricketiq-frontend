@@ -353,7 +353,7 @@ function PlayModeModal({ onPlayOffline, onPlayRoom, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOM SCREEN — create/join, then the live lobby while players gather
 // ═══════════════════════════════════════════════════════════════════════════════
-function RoomScreen({ user, onExit, onGameStart }) {
+function RoomScreen({ user, onExit, onGameStart, onRequestStart }) {
   const [phase, setPhase] = useState("create-join"); // create-join | lobby
   const [tab, setTab] = useState("create"); // create | join
   const [joinCode, setJoinCode] = useState("");
@@ -366,8 +366,12 @@ function RoomScreen({ user, onExit, onGameStart }) {
   const playerId = useRef(getOrCreateLocalPlayerId()).current;
   const playerName = user?.displayName || nameInput.trim();
 
-  // Live room updates once we're in a room — this is the same listener
-  // pattern the synchronized-question stage will build directly on top of.
+  // Live room updates once we're in a room. Every client — host and joiners
+  // alike — watches room.status here and navigates to the quiz screen the
+  // moment it flips to "playing". This was the actual bug: previously only
+  // the host's own button click triggered navigation directly, so joiners'
+  // screens had no mechanism to react to the game starting at all, even
+  // though the underlying room data was updating correctly for everyone.
   useEffect(() => {
     if (!roomCode) return;
     const roomRef = doc(db, "rooms", roomCode);
@@ -375,13 +379,13 @@ function RoomScreen({ user, onExit, onGameStart }) {
       roomRef,
       (snap) => {
         if (!snap.exists()) { setError("This room no longer exists."); setPhase("create-join"); setRoomCode(null); return; }
-        console.log("Room update received:", snap.data());
-        setRoom(snap.data());
+        const data = snap.data();
+        setRoom(data);
+        if (data.status === "playing") {
+          onGameStart?.(roomCode);
+        }
       },
       (err) => {
-        // Previously had no error handler at all — a failed listener (rules
-        // issue, network blip) would fail completely silently, looking
-        // exactly like "the screen just didn't update."
         console.error("Room listener error:", err);
         setError("Lost connection to the room. Try leaving and rejoining.");
       }
@@ -495,7 +499,7 @@ function RoomScreen({ user, onExit, onGameStart }) {
         </div>
 
         {isHost ? (
-          <RippleBtn className="room-start-btn" onClick={() => onGameStart?.(roomCode)} disabled={players.length < 2}>
+          <RippleBtn className="room-start-btn" onClick={() => onRequestStart?.(roomCode)} disabled={players.length < 2}>
             {players.length < 2 ? "NEED AT LEAST 2 PLAYERS" : "START GAME"}
           </RippleBtn>
         ) : (
@@ -710,9 +714,6 @@ function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
     <div className="qs-root">
       <div className="qs-topbar">
         <div className="qs-topbar-row1">
-          <div className="room-quiz-progress">QUESTION {room.currentQuestionIndex + 1} / {totalQ}</div>
-          <div className="room-quiz-wrong">{me?.wrongCount || 0} WRONG</div>
-          <div className="qs-topbar-divider" />
           <div className="qs-ll-mini-row">
             <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`} onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
               <span className="qs-ll-mini-icon">50:50</span>
@@ -2113,8 +2114,6 @@ button:disabled{cursor:not-allowed}
 .room-loading{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:15px;color:#94a3b8;padding:60px 20px}
 
 /* ── ROOM QUIZ ────────────────────────── */
-.room-quiz-progress{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:1px;color:#94a3b8;flex-shrink:0}
-.room-quiz-wrong{font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;color:#ef4444;background:#2d0707;border:1px solid #4a1414;border-radius:10px;padding:3px 8px;flex-shrink:0}
 .room-waiting-block{margin-top:20px;text-align:center;position:relative;z-index:1}
 .room-waiting-text{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#94a3b8;margin-bottom:10px}
 .room-waiting-avatars{display:flex;justify-content:center;gap:6px}
@@ -2195,17 +2194,23 @@ button:disabled{cursor:not-allowed}
         <RoomScreen
           user={user}
           onExit={() => setScreen("home")}
-          onGameStart={async (roomCode) => {
-            setActiveRoomCode(roomCode);
+          onRequestStart={async (roomCode) => {
+            // Host-only: writes the actual "start" to Firestore. Does NOT
+            // navigate directly — every client, including this one, picks
+            // up the resulting status change via the shared listener below
+            // and navigates through the exact same path.
             try {
               await startRoomGame({ code: roomCode });
-              setScreen("room-quiz");
             } catch (err) {
               console.error("Failed to start room game:", err);
-              // RoomScreen's own lobby error display will show on next
-              // render if this fails — the room stays in "waiting" status
-              // since startRoomGame never wrote anything on failure.
             }
+          }}
+          onGameStart={(roomCode) => {
+            // Fires for every client (host and joiners alike) the moment
+            // room.status flips to "playing" — this is the one and only
+            // place navigation into the quiz screen happens.
+            setActiveRoomCode(roomCode);
+            setScreen("room-quiz");
           }}
         />
       )}
