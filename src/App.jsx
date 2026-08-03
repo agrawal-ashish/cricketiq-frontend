@@ -70,7 +70,7 @@ async function createRoom({ playerId, playerName }) {
       questionIds: [],
       currentQuestionIndex: 0,
       players: {
-        [playerId]: { name: playerName, isHost: true, score: 0, joinedAt: Date.now() },
+        [playerId]: { name: playerName, isHost: true, score: 0, joinedAt: serverTimestamp() },
       },
     });
     return code;
@@ -93,7 +93,7 @@ async function joinRoom({ code, playerId, playerName }) {
       throw new Error("That room is full (5 players max).");
     }
     tx.update(roomRef, {
-      [`players.${playerId}`]: { name: playerName, isHost: false, score: 0, joinedAt: Date.now() },
+      [`players.${playerId}`]: { name: playerName, isHost: false, score: 0, joinedAt: serverTimestamp() },
     });
     return { ...room, players: { ...players, [playerId]: { name: playerName, isHost: false, score: 0 } } };
   });
@@ -380,6 +380,7 @@ function RoomScreen({ user, onExit, onGameStart, onRequestStart }) {
       (snap) => {
         if (!snap.exists()) { setError("This room no longer exists."); setPhase("create-join"); setRoomCode(null); return; }
         const data = snap.data();
+        console.log("Room snapshot — players now:", Object.entries(data.players || {}).map(([id, p]) => `${p.name} (${id.slice(0,8)})`));
         setRoom(data);
         if (data.status === "playing") {
           onGameStart?.(roomCode);
@@ -463,7 +464,8 @@ function RoomScreen({ user, onExit, onGameStart, onRequestStart }) {
   }
 
   if (phase === "lobby" && room) {
-    const players = Object.entries(room.players || {}).sort((a, b) => (a[1].joinedAt||0) - (b[1].joinedAt||0));
+    const getMillis = (p) => (p.joinedAt && typeof p.joinedAt.toMillis === "function") ? p.joinedAt.toMillis() : 0;
+    const players = Object.entries(room.players || {}).sort((a, b) => getMillis(a[1]) - getMillis(b[1]));
     const isHost = room.hostId === playerId;
     const emptySlots = Math.max(0, MAX_ROOM_PLAYERS - players.length);
 
@@ -713,22 +715,20 @@ function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
   return (
     <div className="qs-root">
       <div className="qs-topbar">
-        <div className="qs-topbar-row1">
-          <div className="qs-ll-mini-row">
-            <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`} onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
-              <span className="qs-ll-mini-icon">50:50</span>
-              {!lifelines.ff && <div className="qs-ll-mini-strike" />}
-            </RippleBtn>
-            <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`} onClick={useSkipLifeline} disabled={!lifelines.skip || chosen !== null}>
-              <span className="qs-ll-mini-icon">⏭ SKIP</span>
-              {!lifelines.skip && <div className="qs-ll-mini-strike" />}
-            </RippleBtn>
-          </div>
-          <div className="qs-topbar-spacer" />
-          <div className="qs-score-wrap">
-            <ScorePop value={popVal} visible={showPop} />
-            <div className="qs-score">{me?.score || 0} <span>PTS</span></div>
-          </div>
+        <div className="qs-ll-mini-row">
+          <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`} onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
+            <span className="qs-ll-mini-icon">50:50</span>
+            {!lifelines.ff && <div className="qs-ll-mini-strike" />}
+          </RippleBtn>
+          <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`} onClick={useSkipLifeline} disabled={!lifelines.skip || chosen !== null}>
+            <span className="qs-ll-mini-icon">⏭ SKIP</span>
+            {!lifelines.skip && <div className="qs-ll-mini-strike" />}
+          </RippleBtn>
+        </div>
+        <div className="qs-topbar-spacer" />
+        <div className="qs-score-wrap">
+          <ScorePop value={popVal} visible={showPop} />
+          <div className="qs-score">{me?.score || 0} <span>PTS</span></div>
         </div>
       </div>
 
