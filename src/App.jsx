@@ -105,6 +105,62 @@ function leaveRoom({ code, playerId }) {
   // Failure here (e.g., room already deleted) is fine to ignore — leaving is best-effort.
 }
 
+const ROOM_TIMER_SECONDS = 20; // matches solo mode's per-question timer
+
+// Fetches the shared question set (once, from the host's device) and writes
+// it into the room so every player reads the exact same 25 questions in the
+// exact same order — clients never fetch their own independent set.
+async function startRoomGame({ code }) {
+  const res = await fetch(`${API_BASE_URL}/api/questions/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ count: ROOM_QUESTION_COUNT }),
+  });
+  if (!res.ok) throw new Error("Couldn't load questions for the room.");
+  const data = await res.json();
+  const questions = (data.questions || []).slice(0, ROOM_QUESTION_COUNT);
+  if (questions.length === 0) throw new Error("Couldn't load questions for the room.");
+
+  const roomRef = doc(db, "rooms", code);
+  const snap = await getDoc(roomRef);
+  if (!snap.exists()) throw new Error("This room no longer exists.");
+  const room = snap.data();
+
+  const resetFields = {
+    status: "playing",
+    questions,
+    currentQuestionIndex: 0,
+    questionStartedAt: Date.now(),
+  };
+  Object.keys(room.players || {}).forEach((pid) => {
+    resetFields[`players.${pid}.score`] = 0;
+    resetFields[`players.${pid}.wrongCount`] = 0;
+    resetFields[`players.${pid}.lastAnsweredIndex`] = -1;
+  });
+  await updateDoc(roomRef, resetFields);
+}
+
+// Host-only: advances the room to the next question, or marks it finished if
+// that was the last one. Uses a transaction guarded on the expected current
+// index, so if two triggers fire close together (everyone-answered AND the
+// timer expiring, say), only the first one actually does anything — the
+// second sees the index no longer matches and safely no-ops.
+async function advanceRoomQuestion({ code, expectedIndex, totalQuestions }) {
+  const roomRef = doc(db, "rooms", code);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(roomRef);
+    if (!snap.exists()) return;
+    const room = snap.data();
+    if (room.currentQuestionIndex !== expectedIndex) return; // someone else already advanced it
+    const nextIndex = expectedIndex + 1;
+    if (nextIndex >= totalQuestions) {
+      tx.update(roomRef, { status: "finished" });
+    } else {
+      tx.update(roomRef, { currentQuestionIndex: nextIndex, questionStartedAt: Date.now() });
+    }
+  });
+}
+
 // ── ADSENSE CONFIG ───────────────────────────────────────────────────────────
 // Replace with your real publisher ID once AdSense approves your site
 // (AdSense dashboard → Account → Account information). Create ad units there
@@ -497,6 +553,282 @@ function RoomScreen({ user, onExit, onGameStart }) {
       )}
 
       {error && <p className="room-error">{error}</p>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOM QUIZ SCREEN — synchronized play: everyone sees the same question,
+// the room only advances once everyone's answered (or the timer runs out)
+// ═══════════════════════════════════════════════════════════════════════════════
+function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
+  const [room, setRoom] = useState(null);
+  const [error, setError] = useState(null);
+  const [chosen, setChosen] = useState(null);
+  const [elim, setElim] = useState([]);
+  const [lifelines, setLifelines] = useState({ ff: true, skip: true });
+  const [preparedQ, setPreparedQ] = useState(null);
+  const [popVal, setPopVal] = useState(0);
+  const [showPop, setShowPop] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState(ROOM_TIMER_SECONDS);
+
+  const seenIndexRef = useRef(-1); // last question index we've already prepared locally
+  const advanceTimeoutRef = useRef(null);
+
+  // Live room state
+  useEffect(() => {
+    const roomRef = doc(db, "rooms", roomCode);
+    const unsub = onSnapshot(
+      roomRef,
+      (snap) => {
+        if (!snap.exists()) { setError("This room no longer exists."); return; }
+        setRoom(snap.data());
+      },
+      (err) => {
+        console.error("Room quiz listener error:", err);
+        setError("Lost connection to the room. Try rejoining from the home screen.");
+      }
+    );
+    return unsub;
+  }, [roomCode]);
+
+  // When the shared question index changes, prepare that question locally
+  // (shuffle its options) and reset this player's per-question local state.
+  useEffect(() => {
+    if (!room || !room.questions) return;
+    if (room.status === "finished") { onFinish?.(); return; }
+    if (room.currentQuestionIndex !== seenIndexRef.current) {
+      seenIndexRef.current = room.currentQuestionIndex;
+      const q = room.questions[room.currentQuestionIndex];
+      if (q) setPreparedQ(prepareQuestion(q));
+      setChosen(null);
+      setElim([]);
+    }
+  }, [room?.currentQuestionIndex, room?.status]);
+
+  // Synced countdown, based on the shared questionStartedAt timestamp rather
+  // than each device's own clock starting fresh — keeps everyone's timer
+  // showing roughly the same remaining time regardless of render timing.
+  useEffect(() => {
+    if (!room?.questionStartedAt) return;
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - room.questionStartedAt) / 1000);
+      setSecondsLeft(Math.max(0, ROOM_TIMER_SECONDS - elapsed));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [room?.questionStartedAt, room?.currentQuestionIndex]);
+
+  const me = room?.players?.[playerId];
+  const isHost = room?.hostId === playerId;
+  const hasAnsweredCurrent = me && (me.lastAnsweredIndex ?? -1) >= (room?.currentQuestionIndex ?? 0);
+
+  const submitAnswer = async (idx, wasSkip) => {
+    if (!room || !preparedQ || chosen !== null) return;
+    setChosen(idx ?? -1);
+    const correct = !wasSkip && idx === preparedQ.correctIdx;
+    const bonus = streak >= 4 ? 10 : streak >= 2 ? 5 : 0;
+    const pts = correct ? 10 + bonus : 0;
+    if (correct) { setStreak(s => s + 1); setPopVal(pts); setShowPop(true); setTimeout(() => setShowPop(false), 900); }
+    else { setStreak(0); }
+
+    const newScore = (me?.score || 0) + pts;
+    const newWrong = (me?.wrongCount || 0) + (!wasSkip && !correct ? 1 : 0);
+    try {
+      await updateDoc(doc(db, "rooms", roomCode), {
+        [`players.${playerId}.score`]: newScore,
+        [`players.${playerId}.wrongCount`]: newWrong,
+        [`players.${playerId}.lastAnsweredIndex`]: room.currentQuestionIndex,
+      });
+    } catch (err) {
+      console.error("Failed to submit answer:", err);
+    }
+  };
+
+  const useFiftyFifty = () => {
+    if (!lifelines.ff || chosen !== null || !preparedQ) return;
+    setLifelines(l => ({ ...l, ff: false }));
+    const wrongIdxs = [0,1,2,3].filter(i => i !== preparedQ.correctIdx);
+    const toEliminate = wrongIdxs.sort(() => Math.random()-0.5).slice(0,2);
+    setElim(toEliminate);
+  };
+  const useSkipLifeline = () => {
+    if (!lifelines.skip || chosen !== null) return;
+    setLifelines(l => ({ ...l, skip: false }));
+    submitAnswer(null, true);
+  };
+
+  // Host-only: watch for "everyone's answered" and advance immediately
+  // rather than waiting out the rest of the timer.
+  useEffect(() => {
+    if (!isHost || !room || room.status !== "playing") return;
+    const players = Object.values(room.players || {});
+    if (players.length === 0) return;
+    const allAnswered = players.every(p => (p.lastAnsweredIndex ?? -1) >= room.currentQuestionIndex);
+    if (allAnswered) {
+      advanceRoomQuestion({ code: roomCode, expectedIndex: room.currentQuestionIndex, totalQuestions: room.questions.length })
+        .catch(err => console.error("Advance (all-answered) failed:", err));
+    }
+  }, [room, isHost, roomCode]);
+
+  // Host-only: fallback advancement when the timer runs out, even if not
+  // everyone has answered yet.
+  useEffect(() => {
+    if (!isHost || !room || room.status !== "playing" || !room.questionStartedAt) return;
+    if (advanceTimeoutRef.current) clearTimeout(advanceTimeoutRef.current);
+    const msRemaining = ROOM_TIMER_SECONDS * 1000 - (Date.now() - room.questionStartedAt);
+    advanceTimeoutRef.current = setTimeout(() => {
+      advanceRoomQuestion({ code: roomCode, expectedIndex: room.currentQuestionIndex, totalQuestions: room.questions.length })
+        .catch(err => console.error("Advance (timeout) failed:", err));
+    }, Math.max(0, msRemaining));
+    return () => clearTimeout(advanceTimeoutRef.current);
+  }, [room?.currentQuestionIndex, room?.questionStartedAt, isHost, roomCode]);
+
+  if (error) {
+    return (
+      <div className="qs-root">
+        <p className="room-error">{error}</p>
+        <RippleBtn className="room-primary-btn" onClick={onLeave}>BACK TO HOME</RippleBtn>
+      </div>
+    );
+  }
+
+  if (!room || !preparedQ) {
+    return <div className="room-root"><div className="room-loading">Loading match…</div></div>;
+  }
+
+  const q = preparedQ;
+  const catMeta = CAT_META[q?.cat] || { color:"#60a5fa", icon:"🏏" };
+  const labels = ["A","B","C","D"];
+  const players = Object.entries(room.players || {});
+  const answeredIds = players.filter(([id,p]) => (p.lastAnsweredIndex ?? -1) >= room.currentQuestionIndex).map(([id]) => id);
+  const totalQ = room.questions.length;
+
+  return (
+    <div className="qs-root">
+      <div className="qs-topbar">
+        <div className="qs-topbar-row1">
+          <div className="room-quiz-progress">QUESTION {room.currentQuestionIndex + 1} / {totalQ}</div>
+          <div className="room-quiz-wrong">{me?.wrongCount || 0} WRONG</div>
+          <div className="qs-topbar-divider" />
+          <div className="qs-ll-mini-row">
+            <RippleBtn className={`qs-ll-mini ${!lifelines.ff ? "qs-ll-mini-used" : ""}`} onClick={useFiftyFifty} disabled={!lifelines.ff || chosen !== null}>
+              <span className="qs-ll-mini-icon">50:50</span>
+              {!lifelines.ff && <div className="qs-ll-mini-strike" />}
+            </RippleBtn>
+            <RippleBtn className={`qs-ll-mini ${!lifelines.skip ? "qs-ll-mini-used" : ""}`} onClick={useSkipLifeline} disabled={!lifelines.skip || chosen !== null}>
+              <span className="qs-ll-mini-icon">⏭ SKIP</span>
+              {!lifelines.skip && <div className="qs-ll-mini-strike" />}
+            </RippleBtn>
+          </div>
+          <div className="qs-topbar-spacer" />
+          <div className="qs-score-wrap">
+            <ScorePop value={popVal} visible={showPop} />
+            <div className="qs-score">{me?.score || 0} <span>PTS</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="qs-card-wrap">
+        <div className="qs-card-top">
+          <div className="qs-cat-badge" style={{ "--cc": catMeta.color }}>
+            <span>{catMeta.icon}</span> {q.cat.toUpperCase()}
+          </div>
+          <div style={{ position:"relative", width:64, height:64, flexShrink:0 }}>
+            <svg width="64" height="64" style={{ transform:"rotate(-90deg)" }}>
+              <circle cx="32" cy="32" r="24" fill="none" stroke="#1e293b" strokeWidth="4" />
+              <circle cx="32" cy="32" r="24" fill="none" stroke={secondsLeft > 10 ? "#34d399" : secondsLeft > 5 ? "#fbbf24" : "#ef4444"} strokeWidth="4"
+                strokeDasharray={2*Math.PI*24} strokeDashoffset={2*Math.PI*24*(1-secondsLeft/ROOM_TIMER_SECONDS)}
+                style={{ transition:"stroke-dashoffset 0.9s linear, stroke 0.5s" }} />
+            </svg>
+            <span style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+              fontFamily:"'Bebas Neue', sans-serif", fontSize:22, color: secondsLeft > 10 ? "#34d399" : secondsLeft > 5 ? "#fbbf24" : "#ef4444", lineHeight:1 }}>{secondsLeft}</span>
+          </div>
+        </div>
+        <div className="qs-qnum" style={{ color: catMeta.color }}>QUESTION {room.currentQuestionIndex + 1}</div>
+        <div className="qs-qtext">{q.q}</div>
+      </div>
+
+      <div className="qs-options">
+        {q.shuffledOpts.map((opt, idx) => {
+          const isElim = elim.includes(idx);
+          const isChosen = chosen === idx;
+          const isCorrect = (chosen !== null) && idx === q.correctIdx;
+          const isWrong = isChosen && idx !== q.correctIdx;
+          let state = "idle";
+          if (isElim) state = "elim";
+          else if (isCorrect) state = "correct";
+          else if (isWrong) state = "wrong";
+          else if (chosen !== null) state = "dim";
+          return (
+            <RippleBtn key={idx} className={`qs-opt qs-opt-${state}`} style={{ "--cc": catMeta.color }}
+              onClick={() => submitAnswer(idx, false)} disabled={isElim || chosen !== null}>
+              <span className={`qs-opt-label qs-opt-label-${state}`}>{labels[idx]}</span>
+              <span className="qs-opt-text" style={isElim ? { textDecoration:"line-through", color:"#475569" } : {}}>{opt}</span>
+              {isCorrect && <span className="qs-opt-check">✓</span>}
+              {isWrong && <span className="qs-opt-cross">✗</span>}
+            </RippleBtn>
+          );
+        })}
+      </div>
+
+      {hasAnsweredCurrent &&
+        <div className="room-waiting-block">
+          <div className="room-waiting-text">Waiting for other players to answer…</div>
+          <div className="room-waiting-avatars">
+            {players.map(([id, p]) => (
+              <div key={id} className={`room-waiting-avatar ${answeredIds.includes(id) ? "room-waiting-avatar-done" : ""}`}>
+                {(p.name || "?")[0].toUpperCase()}
+              </div>
+            ))}
+          </div>
+        </div>
+      }
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOM LEADERBOARD — shown to everyone once the match ends
+// ═══════════════════════════════════════════════════════════════════════════════
+function RoomLeaderboardScreen({ roomCode, playerId, onBackHome }) {
+  const [room, setRoom] = useState(null);
+
+  useEffect(() => {
+    const roomRef = doc(db, "rooms", roomCode);
+    const unsub = onSnapshot(roomRef, (snap) => { if (snap.exists()) setRoom(snap.data()); }, () => {});
+    return unsub;
+  }, [roomCode]);
+
+  if (!room) return <div className="room-root"><div className="room-loading">Loading results…</div></div>;
+
+  const ranked = Object.entries(room.players || {})
+    .map(([id, p]) => ({ id, ...p }))
+    .sort((a, b) => (b.score||0) - (a.score||0));
+
+  return (
+    <div className="rs-root">
+      <div className="lb-trophy">🏆</div>
+      <div className="lb-title">MATCH RESULTS</div>
+      <div className="lb-room-code">Room {roomCode.slice(0,3)} {roomCode.slice(3)}</div>
+
+      <div className="lb-list">
+        {ranked.map((p, i) => (
+          <div key={p.id} className={`lb-row ${i === 0 ? "lb-row-first" : ""}`}>
+            <div className="lb-rank" style={{ color: i === 0 ? "#f59e0b" : "#94a3b8" }}>{i + 1}</div>
+            <div className="lb-avatar" style={{ background: i === 0 ? "#f59e0b" : "#b5d99c", color: i===0 ? "#412402" : "#0f172a" }}>
+              {(p.name || "?")[0].toUpperCase()}
+            </div>
+            <div className="lb-name">{p.name}</div>
+            {p.isHost && <div className="room-player-host">HOST</div>}
+            <div className="lb-score" style={{ color: i === 0 ? "#f59e0b" : "#e2e8f0" }}>{p.score || 0}</div>
+          </div>
+        ))}
+      </div>
+
+      <RippleBtn className="rs-cta" onClick={onBackHome}>🏠 BACK TO HOME</RippleBtn>
     </div>
   );
 }
@@ -1351,6 +1683,7 @@ function saveFlag(key, value) {
 export default function App() {
   const [screen, setScreen]     = useState("home");
   const [showPlayModeModal, setShowPlayModeModal] = useState(false);
+  const [activeRoomCode, setActiveRoomCode] = useState(null);
   const [answered, setAnswered] = useState(() => loadIdSet(LS_CORRECT_KEY)); // correctly answered — excluded forever
   const [recentlySeen, setRecentlySeen] = useState(() => loadIdSet(LS_RECENT_KEY)); // all shown last game — excluded next game
   const [stats, setStats]       = useState({ gamesPlayed:0, bestScore:0, totalCorrect:0 });
@@ -1778,6 +2111,27 @@ button:disabled{cursor:not-allowed}
 .room-start-btn:disabled{opacity:0.5}
 .room-waiting-host{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:14px;color:#94a3b8;padding:16px}
 .room-loading{text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:15px;color:#94a3b8;padding:60px 20px}
+
+/* ── ROOM QUIZ ────────────────────────── */
+.room-quiz-progress{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:1px;color:#94a3b8;flex-shrink:0}
+.room-quiz-wrong{font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;color:#ef4444;background:#2d0707;border:1px solid #4a1414;border-radius:10px;padding:3px 8px;flex-shrink:0}
+.room-waiting-block{margin-top:20px;text-align:center;position:relative;z-index:1}
+.room-waiting-text{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:#94a3b8;margin-bottom:10px}
+.room-waiting-avatars{display:flex;justify-content:center;gap:6px}
+.room-waiting-avatar{width:26px;height:26px;border-radius:50%;background:#1e3a5f;color:#64748b;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:11px;transition:all 0.3s}
+.room-waiting-avatar-done{background:#34d399;color:#052e14}
+
+/* ── ROOM LEADERBOARD ─────────────────── */
+.lb-trophy{font-size:44px;text-align:center;margin-bottom:4px}
+.lb-title{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:#f59e0b;text-align:center;margin-bottom:4px}
+.lb-room-code{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:#64748b;text-align:center;margin-bottom:24px}
+.lb-list{display:flex;flex-direction:column;gap:8px;width:100%;margin-bottom:24px}
+.lb-row{display:flex;align-items:center;gap:12px;background:#0f172a;border:1px solid #1e3a5f;border-radius:12px;padding:12px 14px}
+.lb-row-first{background:linear-gradient(135deg,#2d2408,#3d3010);border-color:#f59e0b}
+.lb-rank{font-family:'Bebas Neue',sans-serif;font-size:18px;width:20px;flex-shrink:0}
+.lb-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:14px;flex-shrink:0}
+.lb-name{font-family:'Barlow Condensed',sans-serif;font-size:15px;color:#e2e8f0;flex:1;text-align:left}
+.lb-score{font-family:'Bebas Neue',sans-serif;font-size:20px}
       `}</style>
 
       {questions === null && !loadError && (
@@ -1841,11 +2195,35 @@ button:disabled{cursor:not-allowed}
         <RoomScreen
           user={user}
           onExit={() => setScreen("home")}
-          onGameStart={(roomCode) => {
-            // Synchronized in-room gameplay is the next build stage — for now
-            // this just confirms the handoff point is wired correctly.
-            console.log("Room game starting:", roomCode);
+          onGameStart={async (roomCode) => {
+            setActiveRoomCode(roomCode);
+            try {
+              await startRoomGame({ code: roomCode });
+              setScreen("room-quiz");
+            } catch (err) {
+              console.error("Failed to start room game:", err);
+              // RoomScreen's own lobby error display will show on next
+              // render if this fails — the room stays in "waiting" status
+              // since startRoomGame never wrote anything on failure.
+            }
           }}
+        />
+      )}
+
+      {screen === "room-quiz" && activeRoomCode && (
+        <RoomQuizScreen
+          roomCode={activeRoomCode}
+          playerId={getOrCreateLocalPlayerId()}
+          onFinish={() => setScreen("room-leaderboard")}
+          onLeave={() => { setActiveRoomCode(null); setScreen("home"); }}
+        />
+      )}
+
+      {screen === "room-leaderboard" && activeRoomCode && (
+        <RoomLeaderboardScreen
+          roomCode={activeRoomCode}
+          playerId={getOrCreateLocalPlayerId()}
+          onBackHome={() => { setActiveRoomCode(null); setScreen("home"); }}
         />
       )}
 
