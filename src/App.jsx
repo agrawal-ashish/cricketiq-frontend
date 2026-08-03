@@ -642,12 +642,30 @@ function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
 
     const newScore = (me?.score || 0) + pts;
     const newWrong = (me?.wrongCount || 0) + (!wasSkip && !correct ? 1 : 0);
+    const questionIndex = room.currentQuestionIndex;
     try {
       await updateDoc(doc(db, "rooms", roomCode), {
         [`players.${playerId}.score`]: newScore,
         [`players.${playerId}.wrongCount`]: newWrong,
-        [`players.${playerId}.lastAnsweredIndex`]: room.currentQuestionIndex,
+        [`players.${playerId}.lastAnsweredIndex`]: questionIndex,
       });
+
+      // If I'm the host and everyone ELSE has already answered (from the
+      // most recent state I have), advance right now — don't wait for my
+      // own write above to round-trip back through the snapshot listener
+      // before the "has everyone answered" check gets a chance to re-run.
+      // That round-trip wait is the most likely explanation for the delay:
+      // when the host answers last, the room previously wouldn't advance
+      // until either that round-trip completed or the timer ran out.
+      if (isHost) {
+        const othersReady = Object.entries(room.players || {})
+          .filter(([id]) => id !== playerId)
+          .every(([, p]) => (p.lastAnsweredIndex ?? -1) >= questionIndex);
+        if (othersReady) {
+          advanceRoomQuestion({ code: roomCode, expectedIndex: questionIndex, totalQuestions: room.questions.length })
+            .catch(err => console.error("Immediate advance failed:", err));
+        }
+      }
     } catch (err) {
       console.error("Failed to submit answer:", err);
     }
@@ -730,6 +748,10 @@ function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
           <ScorePop value={popVal} visible={showPop} />
           <div className="qs-score">{me?.score || 0} <span>PTS</span></div>
         </div>
+      </div>
+
+      <div className="room-progress-track">
+        <div className="room-progress-fill" style={{ width: `${((room.currentQuestionIndex + 1) / totalQ) * 100}%` }} />
       </div>
 
       <div className="qs-card-wrap">
@@ -2119,9 +2141,11 @@ button:disabled{cursor:not-allowed}
 .room-waiting-avatars{display:flex;justify-content:center;gap:6px}
 .room-waiting-avatar{width:26px;height:26px;border-radius:50%;background:#1e3a5f;color:#64748b;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:11px;transition:all 0.3s}
 .room-waiting-avatar-done{background:#34d399;color:#052e14}
+.room-progress-track{width:100%;height:6px;background:#0f172a;border-radius:4px;overflow:hidden;margin:14px 0 4px;position:relative;z-index:1}
+.room-progress-fill{height:100%;background:linear-gradient(90deg,#b5d99c,#34d399);border-radius:4px;transition:width 0.5s ease}
 
 /* ── ROOM LEADERBOARD ─────────────────── */
-.lb-trophy{font-size:44px;text-align:center;margin-bottom:4px}
+.lb-trophy{font-size:44px;text-align:center;margin-bottom:14px}
 .lb-title{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:#f59e0b;text-align:center;margin-bottom:4px}
 .lb-room-code{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:#64748b;text-align:center;margin-bottom:24px}
 .lb-list{display:flex;flex-direction:column;gap:8px;width:100%;margin-bottom:24px}
