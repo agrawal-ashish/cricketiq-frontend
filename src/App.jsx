@@ -394,6 +394,32 @@ function RoomScreen({ user, onExit, onGameStart, onRequestStart }) {
     return unsub;
   }, [roomCode]);
 
+  // Defensive catch-up: iOS Safari (and mobile browsers generally) can
+  // suspend a backgrounded tab's real-time connection to save battery —
+  // e.g. exactly the case where you create a room on your phone, then
+  // switch away to open it on another device to join. The write from the
+  // other device succeeds either way, but the backgrounded tab's listener
+  // may not hear about it until something wakes it back up. Rather than
+  // relying purely on that connection to self-heal, force a fresh read the
+  // moment this tab becomes visible again.
+  useEffect(() => {
+    if (!roomCode) return;
+    const handleVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const snap = await getDoc(doc(db, "rooms", roomCode));
+        if (snap.exists()) {
+          console.log("Tab became visible — re-synced room state");
+          setRoom(snap.data());
+        }
+      } catch (err) {
+        console.error("Visibility re-sync failed:", err);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => document.removeEventListener("visibilitychange", handleVisible);
+  }, [roomCode]);
+
   const needsName = !user && !nameInput.trim();
 
   const handleCreate = async () => {
@@ -597,6 +623,23 @@ function RoomQuizScreen({ roomCode, playerId, onFinish, onLeave }) {
       }
     );
     return unsub;
+  }, [roomCode]);
+
+  // Same defensive catch-up as the lobby screen — force a fresh read when
+  // this tab regains focus, in case the background connection missed an
+  // update while the tab was suspended.
+  useEffect(() => {
+    const handleVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const snap = await getDoc(doc(db, "rooms", roomCode));
+        if (snap.exists()) setRoom(snap.data());
+      } catch (err) {
+        console.error("Visibility re-sync failed:", err);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => document.removeEventListener("visibilitychange", handleVisible);
   }, [roomCode]);
 
   // When the shared question index changes, prepare that question locally
