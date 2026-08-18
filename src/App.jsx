@@ -981,7 +981,7 @@ function HomeScreen({ onStart, stats, totalQuestions, user, onSignOut, showSignI
             { val: stats.bestScore,   lbl: "TOP SCORE", icon:"🏆" },
             { val: stats.totalCorrect, lbl: "CORRECT", icon:"✅" },
           ].map((s, i) => (
-            <div key={i} className="hs-stat-card" style={{ animationDelay:`${i*0.1}s` }}>
+            <div key={i} className="hs-stat-card">
               <div className="hs-stat-icon">{s.icon}</div>
               <div className="hs-stat-val">{s.val}</div>
               <div className="hs-stat-lbl">{s.lbl}</div>
@@ -1894,12 +1894,7 @@ button:disabled{cursor:not-allowed}
 .hs-ring-3{width:700px;height:700px;transform:translate(-50%,-50%)}
 
 .hs-content{display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;position:relative;z-index:1;}
-.hs-in > *{animation:hsIn 0.6s ease both}
-.hs-in > *:nth-child(1){animation-delay:0s}
-.hs-in > *:nth-child(2){animation-delay:0.1s}
-.hs-in > *:nth-child(3){animation-delay:0.2s}
-.hs-in > *:nth-child(4){animation-delay:0.3s}
-.hs-in > *:nth-child(5){animation-delay:0.4s}
+.hs-content.hs-in{animation:hsIn 0.25s ease both}
 
 .hs-logo-block{text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
 .hs-ball-wrap{position:relative;display:inline-block;margin-bottom:4px}
@@ -1910,7 +1905,7 @@ button:disabled{cursor:not-allowed}
 .hs-tagline{font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:4px;color:#475569;text-transform:uppercase}
 
 .hs-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
-.hs-stat-card{background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #1e3a5f;border-radius:14px;padding:16px 8px;text-align:center;animation:scaleIn 0.4s ease both}
+.hs-stat-card{background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #1e3a5f;border-radius:14px;padding:16px 8px;text-align:center;animation:scaleIn 0.25s ease both}
 .hs-stat-icon{font-size:22px;margin-bottom:4px}
 .hs-stat-val{font-family:'Bebas Neue',sans-serif;font-size:30px;color:#f59e0b}
 .hs-stat-lbl{font-size:10px;color:#475569;letter-spacing:2px;text-transform:uppercase;margin-top:2px}
