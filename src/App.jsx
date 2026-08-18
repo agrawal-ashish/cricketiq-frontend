@@ -2121,7 +2121,7 @@ button:disabled{cursor:not-allowed}
 .sg-skip{margin-top:4px;font-size:13px;color:#64748b;text-decoration:underline;background:none;padding:8px}
 
 /* ── PLAY MODE MODAL ──────────────────── */
-.pm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.pm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
 .pm-modal{width:100%;max-width:360px;background:linear-gradient(180deg,#0a1420,#0f172a);border-radius:24px;border:1px solid #1e3a5f;padding:26px 22px;animation:scaleIn 0.25s ease both}
 .pm-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#e2e8f0;text-align:center;margin-bottom:20px}
 .pm-card{width:100%;display:flex;align-items:center;gap:14px;border-radius:16px;padding:18px;margin-bottom:12px;text-align:left;transition:transform 0.15s}
