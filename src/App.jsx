@@ -2204,7 +2204,6 @@ button:disabled{cursor:not-allowed}
                 <div className="hs-ball-glow" />
               </div>
               <h1 className="hs-title">CRICKET<span>IQ</span></h1>
-              <p className="hs-tagline">◆ LOADING QUESTIONS… ◆</p>
             </div>
           </div>
         </div>
