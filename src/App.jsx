@@ -1851,7 +1851,7 @@ export default function App() {
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#040810}
-body{font-family:'Barlow',sans-serif;color:#e2e8f0;overflow-x:hidden}
+body{font-family:'Barlow',sans-serif;color:#e2e8f0;overflow-x:hidden;text-size-adjust:100%;-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%}
 button{font-family:inherit;cursor:pointer;border:none;outline:none;background:none}
 button:disabled{cursor:not-allowed}
 
