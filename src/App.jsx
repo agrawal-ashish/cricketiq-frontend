@@ -2195,7 +2195,7 @@ button:disabled{cursor:not-allowed}
 .lb-score{font-family:'Bebas Neue',sans-serif;font-size:20px}
       `}</style>
 
-      {questions === null && !loadError && (
+      {(questions === null || !authReady) && !loadError && (
         <div className="hs-root">
           <div className="hs-content hs-in">
             <div className="hs-logo-block">
@@ -2233,7 +2233,7 @@ button:disabled{cursor:not-allowed}
         </div>
       )}
 
-      {questions !== null && screen === "home" && (
+      {questions !== null && authReady && screen === "home" && (
         <HomeScreen
           onStart={() => setShowPlayModeModal(true)}
           stats={stats}
