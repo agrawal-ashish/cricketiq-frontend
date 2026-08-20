@@ -1764,6 +1764,16 @@ export default function App() {
   // lose). Never asked again after that — whether they signed in or skipped.
   const [user, setUser] = useState(null); // Firebase user object, or null
   const [authReady, setAuthReady] = useState(false); // true once Firebase has checked for an existing session
+  const [fontsReady, setFontsReady] = useState(false); // true once Bebas Neue has actually finished loading
+  useEffect(() => {
+    let cancelled = false;
+    waitForFonts().finally(() => { if (!cancelled) setFontsReady(true); });
+    // Safety fallback: if font loading somehow hangs (e.g. blocked request),
+    // don't leave the splash screen blank forever — show it with whatever
+    // font is available after a short wait.
+    const fallback = setTimeout(() => { if (!cancelled) setFontsReady(true); }, 1500);
+    return () => { cancelled = true; clearTimeout(fallback); };
+  }, []);
   const [hasSeenSignInPrompt, setHasSeenSignInPrompt] = useState(() => loadFlag(LS_SEEN_SIGNIN_KEY));
 
   useEffect(() => {
@@ -2195,7 +2205,7 @@ button:disabled{cursor:not-allowed}
 .lb-score{font-family:'Bebas Neue',sans-serif;font-size:20px}
       `}</style>
 
-      {(questions === null || !authReady) && !loadError && (
+      {(questions === null || !authReady || !fontsReady) && !loadError && (
         <div className="hs-root">
           <div className="hs-content hs-in">
             <div className="hs-logo-block">
@@ -2232,7 +2242,7 @@ button:disabled{cursor:not-allowed}
         </div>
       )}
 
-      {questions !== null && authReady && screen === "home" && (
+      {questions !== null && authReady && fontsReady && screen === "home" && (
         <HomeScreen
           onStart={() => setShowPlayModeModal(true)}
           stats={stats}
