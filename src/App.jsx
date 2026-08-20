@@ -1774,6 +1774,16 @@ export default function App() {
     const fallback = setTimeout(() => { if (!cancelled) setFontsReady(true); }, 1500);
     return () => { cancelled = true; clearTimeout(fallback); };
   }, []);
+
+  // Guarantees the splash screen shows for at least 2 seconds even when
+  // everything else (questions, auth, fonts) finishes loading faster than
+  // that — otherwise on a fast connection it can flash by almost instantly.
+  const [minSplashElapsed, setMinSplashElapsed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setMinSplashElapsed(true), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
   const [hasSeenSignInPrompt, setHasSeenSignInPrompt] = useState(() => loadFlag(LS_SEEN_SIGNIN_KEY));
 
   useEffect(() => {
@@ -2205,7 +2215,7 @@ button:disabled{cursor:not-allowed}
 .lb-score{font-family:'Bebas Neue',sans-serif;font-size:20px}
       `}</style>
 
-      {(questions === null || !authReady || !fontsReady) && !loadError && (
+      {(questions === null || !authReady || !fontsReady || !minSplashElapsed) && !loadError && (
         <div className="hs-root">
           <div className="hs-content hs-in">
             <div className="hs-logo-block">
@@ -2242,7 +2252,7 @@ button:disabled{cursor:not-allowed}
         </div>
       )}
 
-      {questions !== null && authReady && fontsReady && screen === "home" && (
+      {questions !== null && authReady && fontsReady && minSplashElapsed && screen === "home" && (
         <HomeScreen
           onStart={() => setShowPlayModeModal(true)}
           stats={stats}
